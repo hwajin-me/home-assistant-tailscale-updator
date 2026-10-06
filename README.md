@@ -4,17 +4,23 @@ Tailscale tailnet 정책(JSONC/HuJSON)의 app connector 도메인을 Home Assist
 
 ## 설치 및 인증
 
-Home Assistant **2025.4.4 이상**이 필요합니다.
+Home Assistant **2025.4.4 이상**이 필요합니다. 통합 화면의 로컬 Tailscale 아이콘·로고는 **2026.3 이상**에서 표시됩니다. 밝은 테마·어두운 테마 및 고해상도 이미지를 포함합니다. [Home Assistant 브랜드 이미지 안내](https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api/)
+
+아이콘과 로고는 [Home Assistant Brands의 Tailscale 원본](https://github.com/home-assistant/brands/tree/master/core_integrations/tailscale)을 사용합니다. Tailscale 상표는 해당 소유자의 자산입니다.
 
 1. `custom_components/tailscale_updator` 폴더 전체를 HA의 `/config/custom_components/tailscale_updator`에 복사하고 HA를 재시작합니다. 릴리스 ZIP은 이 폴더 안에 압축 해제합니다.
 2. 또는 HACS → 사용자 지정 저장소에 이 저장소를 **Integration**으로 추가하고 설치합니다. GitHub에 저장소와 릴리스가 게시되어 있어야 합니다.
 3. Tailscale 관리 콘솔의 **Trust credentials / OAuth clients**에서 OAuth 클라이언트를 만들고 **policy_file 쓰기** 권한을 부여합니다. 예전 UI에서는 `acl`로 표시될 수 있습니다. 장치 인증 키(`tskey-auth`)나 일반 API 키가 아닙니다.
-4. HA → 설정 → 기기 및 서비스 → 통합 구성요소 추가 → **Tailscale Updator**에서 Client ID와 Client Secret을 입력합니다. Tailnet은 기본값 `-`를 사용하면 OAuth 클라이언트가 속한 tailnet으로 자동 지정됩니다. 실제 tailnet ID를 입력해도 됩니다.
+4. HA → 설정 → 기기 및 서비스 → 통합 구성요소 추가 → **Tailscale Updator**에서 Client ID와 Client Secret을 입력합니다. Tailnet 입력란은 없으며, OAuth 클라이언트가 속한 tailnet을 자동으로 사용합니다. 기존 설정에 저장된 tailnet 이름도 더 이상 연결에 사용하지 않습니다.
 5. ACL에 이미 있는 app connector 도메인은 첫 연결 때 자동으로 switch로 생성됩니다. 통합의 **구성**에서 앱 이름을 선택해 도메인 쌍을 직접 추가·제거·이름 변경할 수 있습니다.
 
 이 인증은 OAuth 2.0 **client credentials** 방식입니다. 브라우저 리디렉션 로그인이나 refresh token을 사용하지 않습니다. 요청 시 토큰 만료 60초 전부터 새 토큰을 발급하고, API가 401을 반환하면 한 번 재발급하여 재시도합니다. HA 재시작 후 저장된 자격 증명으로 다시 토큰을 발급합니다. 폐기된 자격 증명은 HA 재인증 흐름으로 갱신할 수 있습니다.
 
 Client Secret은 HA config entry 저장소에 보관됩니다. 토큰은 메모리에만 보관하며, 진단 데이터·엔티티 속성에 정책 본문이나 자격 증명을 노출하지 않습니다.
+
+## 언어
+
+Home Assistant 사용자 프로필에서 선택한 언어를 따릅니다. 한국어, 영어, 일본어를 지원합니다. 설정·재인증·도메인 관리 화면, 작업 선택지 및 ACL 서비스 이름·설명·필드에 번역을 적용합니다. 도메인과 앱 커넥터 이름은 정책에 정의된 값을 그대로 표시합니다.
 
 ## App connector 정책 예시
 
@@ -41,6 +47,12 @@ Client Secret은 HA config entry 저장소에 보관됩니다. 토큰은 메모�
 
 이는 관련 부분만 보여주는 예시입니다. 실제 앱 커넥터 노드, 태그 소유권, 경로 승인 및 접근 권한은 Tailscale에서 별도로 구성해야 합니다. 앱 이름 `Streaming`을 선택하며 노드 호스트명이나 `tag:streaming-connector`로 선택하지 않습니다. 중복 앱 이름은 모호한 수정을 막기 위해 거부합니다. `presetAppID` 앱은 도메인을 자동 관리하므로 지원하지 않습니다.
 
+## 중복 및 수정 처리
+
+도메인 추가·수정 시 대상 도메인의 대소문자, 마지막 점, 선행 점과 와일드카드를 정규화하고 중복 항목을 제거합니다. 같은 도메인으로 수정하면 변경이 없는 경우 API 쓰기를 생략하고, 이미 존재하는 도메인으로 수정하면 하나의 쌍으로 합칩니다. 다른 도메인이나 앱의 정책은 보존합니다.
+
+기본 도메인·와일드카드로 나뉘어 등록된 이전 엔티티는 기본 도메인의 엔티티로 통합합니다. 기존 기본 도메인 엔티티의 ID와 사용자 지정 이름을 유지하며, 다른 플랫폼의 엔티티는 건드리지 않습니다. ACL을 다시 읽었을 때 도메인이 사라졌다면 기존 스위치는 Off 상태로 유지됩니다. 구성 화면의 **삭제** 또는 `remove_domains` 액션을 직접 실행하면 해당 도메인 쌍과 스위치를 제거하며, 재시작 후에도 자동 복원하지 않습니다. 이미 ACL에서 사라진 Off 도메인도 삭제할 수 있습니다.
+
 ## Switch 동작
 
 Tailscale은 `*.example.com`에 기본 도메인 `example.com`을 포함하지 않습니다. 따라서 **한 개의 switch가 `example.com`과 `*.example.com` 쌍을 제어**합니다. 입력에 `.example.com`이나 `*.example.com`을 넣어도 `example.com`으로 정규화합니다. ACL에는 Tailscale이 사용하는 `example.com`과 `*.example.com`을 기록하며, 앞에 점만 붙인 `.example.com`은 기록하지 않습니다. 자세한 근거는 [Tailscale wildcard 설명](https://tailscale.com/docs/reference/targets-and-selectors)을 참고하세요.
@@ -52,7 +64,7 @@ Tailscale은 `*.example.com`에 기본 도메인 `example.com`을 포함하지 �
 - 설정 저장이나 HA 시작은 ACL을 변경하지 않습니다. 실제 ACL을 읽어 상태를 정하고, 활성 엔티티가 있으면 60초마다 외부 변경을 반영합니다.
 - 앱이 삭제되거나 읽기에 실패하면 스위치는 `unavailable`이 됩니다. 실패한 쓰기는 켜짐/꺼짐 성공으로 표시하지 않습니다.
 
-HA 통합의 **구성**에서 앱과 작업을 선택합니다. **추가**는 도메인 쌍을 ACL에 저장하고 switch를 생성합니다. **제거**는 해당 쌍을 ACL에서 지우며 switch를 Off로 남깁니다. **수정**은 기존 도메인 쌍을 제거하고 새 도메인 쌍을 한 번의 ACL 쓰기로 추가합니다. 기존 앱은 Tailscale 정책에 있어야 하며, 새 앱 커넥터 자체를 이 화면에서 만들지는 않습니다.
+HA 통합의 **구성**에서 앱과 작업을 선택합니다. **추가**는 도메인 쌍을 ACL에 저장하고 switch를 생성합니다. **삭제**는 해당 쌍을 ACL에서 지우고 switch도 제거합니다. Off로 보관하려면 스위치를 끄거나 ACL 외부 변경 후 재조회하면 됩니다. **수정**은 기존 도메인 쌍을 제거하고 새 도메인 쌍을 한 번의 ACL 쓰기로 추가합니다. 기존 앱은 Tailscale 정책에 있어야 하며, 새 앱 커넥터 자체를 이 화면에서 만들지는 않습니다.
 
 **Off는 인터넷 접근 차단이 아닙니다.** 해당 앱의 도메인 선언을 제거하는 기능이며 다른 wildcard/앱/경로의 영향이나 이미 학습한 라우트의 즉시 철회를 보장하지 않습니다.
 
@@ -75,7 +87,7 @@ data:
     - example.com
 ```
 
-제거는 `tailscale_updator.remove_domains`를 같은 인자로 호출합니다. 기본 도메인과 wildcard가 항상 한 쌍으로 처리됩니다. 액션으로 추가한 도메인도 다음 정책 동기화 때 자동으로 switch에 등록됩니다. 빈 배열이 되어도 앱 자체는 삭제하지 않습니다.
+삭제는 `tailscale_updator.remove_domains`를 같은 인자로 호출하며 스위치까지 제거합니다. 기본 도메인과 wildcard가 항상 한 쌍으로 처리됩니다. 액션으로 추가한 도메인도 다음 정책 동기화 때 자동으로 switch에 등록됩니다. 빈 배열이 되어도 앱 자체는 삭제하지 않습니다.
 
 ### 전체 ACL JSONC 읽기/수정
 

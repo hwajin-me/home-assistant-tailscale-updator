@@ -1,5 +1,6 @@
 """Keep switches synchronized with the remote policy."""
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -9,6 +10,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import ApiError, AuthError, TailscaleClient
 from .const import DOMAIN
 from .policy import PolicyError
+from .registry import forget_domains
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ class PolicyCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=60),
         )
         self.client = client
+        self.edit_lock = asyncio.Lock()
 
     async def _async_update_data(self):
         try:
@@ -34,7 +37,23 @@ class PolicyCoordinator(DataUpdateCoordinator):
         except (ApiError, PolicyError) as err:
             raise UpdateFailed(str(err)) from err
 
+    async def async_delete_domains(self, connector, domains):
+        """Delete from ACL and forget entities; an ordinary Off never forgets them."""
+        async with self.edit_lock:
+
+            async def remove():
+                snapshot = await self.client.get_policy()
+                if connector in snapshot.policy.connectors():
+                    await self.client.set_domains(connector, domains, False)
+
+            await self._async_write(remove)
+            forget_domains(self.hass, self.config_entry, connector, domains)
+
     async def async_write(self, operation, *args):
+        async with self.edit_lock:
+            await self._async_write(operation, *args)
+
+    async def _async_write(self, operation, *args):
         try:
             await operation(*args)
         except AuthError as err:

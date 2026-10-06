@@ -46,7 +46,7 @@ add_domains:
         object:
 remove_domains:
   name: Remove domains
-  description: Remove each parent domain and its wildcard as a pair from an existing app. This is not a traffic-blocking rule. Administrator access required.
+  description: Delete domain pairs from the ACL and remove their Home Assistant switches. Use switch.turn_off to retain Off switches. Administrator access required.
   fields:
     entry_id:
       required: true

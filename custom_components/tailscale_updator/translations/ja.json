@@ -1,0 +1,141 @@
+{
+  "title": "Tailscale Updator",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tailscale OAuth クライアント",
+        "description": "policy_file の書き込み権限を持つ OAuth クライアント ID とシークレットを入力してください。クライアントの tailnet を自動的に使用します。既存のアプリコネクターのドメインはスイッチとして追加されます。",
+        "data": {
+          "client_id": "OAuth クライアント ID",
+          "client_secret": "OAuth クライアントシークレット"
+        }
+      },
+      "reauth_confirm": {
+        "title": "OAuth 認証情報を更新",
+        "data": {
+          "client_id": "OAuth クライアント ID",
+          "client_secret": "OAuth クライアントシークレット"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "OAuth 認証情報が拒否されました。",
+      "cannot_connect": "Tailscale API への接続または OAuth トークンの取得に失敗しました。接続を確認して再試行してください。",
+      "policy_forbidden": "Tailscale ACL API が HTTP 403 を返しました。OAuth クライアントの policy_file 権限と tailnet へのアクセス権を確認してください。",
+      "tailnet_not_found": "Tailscale ACL API が HTTP 404 を返しました。OAuth クライアントの tailnet ポリシーが見つかりません。",
+      "api_error": "Tailscale ACL API がエラーを返しました。Home Assistant のログで HTTP ステータスを確認してください。",
+      "invalid_policy": "Tailscale が返したポリシーを解析できませんでした。Home Assistant のログを確認してください。"
+    },
+    "abort": {
+      "already_configured": "この OAuth クライアントは既に設定されています。",
+      "reauth_successful": "OAuth 認証情報を更新しました。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "アプリコネクターのドメインを管理",
+        "description": "既存のアプリコネクターを選び、ドメインのペアを追加・削除するか名前を変更します。",
+        "data": {
+          "connector": "アプリコネクター名",
+          "action": "操作"
+        }
+      },
+      "change": {
+        "title": "{connector} のドメインを編集",
+        "description": "ドメインと *.ドメインをペアで保存します。削除するとスイッチも削除されます。ACL にないオフのドメインも削除できます。",
+        "data": {
+          "existing_domain": "既存のドメイン",
+          "domain": "ドメイン"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "OAuth 認証情報が拒否されました。",
+      "invalid_domains": "ドメインの形式とアプリコネクターの現在のドメイン一覧を確認してください。",
+      "cannot_connect": "ポリシーの保存または再読み込みに失敗しました。"
+    },
+    "abort": {
+      "cannot_connect": "ポリシーを読み取れませんでした。",
+      "no_connectors": "編集可能な明示的ドメイン一覧を持つアプリコネクターが見つかりません。",
+      "no_domains": "このアプリコネクターにはまだドメインがありません。",
+      "updated": "ACL ドメインを更新しました。",
+      "invalid_auth": "OAuth 認証情報が拒否されました。"
+    }
+  },
+  "selector": {
+    "domain_action": {
+      "options": {
+        "add": "追加",
+        "remove": "削除",
+        "rename": "名前を変更"
+      }
+    }
+  },
+  "services": {
+    "get_acl": {
+      "name": "ACL を取得",
+      "description": "現在の JSONC ポリシーと ETag を読み取ります。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        }
+      }
+    },
+    "set_acl": {
+      "name": "ACL を設定",
+      "description": "「ACL を取得」で取得した ETag を使用して JSONC ポリシー全体を置き換えます。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "policy": {
+          "name": "ポリシー",
+          "description": "JSONC/HuJSON ポリシー文書全体。"
+        },
+        "expected_etag": {
+          "name": "期待する ETag",
+          "description": "「ACL を取得」が返した ETag。同時に行われた変更の上書きを防ぎます。"
+        }
+      }
+    },
+    "add_domains": {
+      "name": "ドメインを追加",
+      "description": "既存のアプリコネクターに各ドメインとワイルドカードをペアで追加します。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "connector": {
+          "name": "アプリコネクター名",
+          "description": "ポリシー内のアプリコネクター名。ノード名やタグではありません。"
+        },
+        "domains": {
+          "name": "ドメイン一覧",
+          "description": "ドメイン名の一覧。各ドメインとワイルドカードを一緒に管理します。"
+        }
+      }
+    },
+    "remove_domains": {
+      "name": "ドメインを削除",
+      "description": "ACL から各ドメインとワイルドカードを削除し、Home Assistant のスイッチも削除します。オフのまま残すにはスイッチをオフにしてください。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "connector": {
+          "name": "アプリコネクター名",
+          "description": "ポリシー内のアプリコネクター名。ノード名やタグではありません。"
+        },
+        "domains": {
+          "name": "ドメイン一覧",
+          "description": "ドメイン名の一覧。各ドメインとワイルドカードを一緒に管理します。"
+        }
+      }
+    }
+  }
+}

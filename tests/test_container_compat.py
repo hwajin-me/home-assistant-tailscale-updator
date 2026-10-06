@@ -27,6 +27,7 @@ async def test_container_end_to_end(tmp_path):
     writes = []
     version = 1
     token_calls = 0
+    reject_writes = False
 
     async def token(request):
         nonlocal token_calls
@@ -40,6 +41,8 @@ async def test_container_end_to_end(tmp_path):
     async def acl(request):
         nonlocal version
         assert request.headers["Authorization"] == "Bearer test-token"
+        if request.method == "POST" and reject_writes:
+            return web.Response(status=403)
         if request.method == "POST":
             assert request.headers["Content-Type"] == "application/hujson"
             if request.headers.get("If-Match") != f'"{version}"':
@@ -102,7 +105,6 @@ async def test_container_end_to_end(tmp_path):
                 DOMAIN,
                 context={"source": "user"},
                 data={
-                    "tailnet": "-",
                     "client_id": "test-id",
                     "client_secret": "test-secret",
                 },
@@ -178,7 +180,137 @@ async def test_container_end_to_end(tmp_path):
             assert len(entries) == 4
             external = next(e for e in entries if "external.com" in e.unique_id)
             assert hass.states.get(external.entity_id).state == "on"
+            # Removed entities can be rediscovered without reloading the integration.
+            registry = er.async_get(hass)
+            registry.async_remove(external.entity_id)
+            await hass.async_block_till_done()
+            await entry.runtime_data.async_refresh()
+            await hass.async_block_till_done()
+            assert hass.states.get(external.entity_id).state == "on"
+            assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 4
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            # Collapse parent/wildcard/case aliases while retaining other platforms.
+            aliases = []
+            for domain in ("*.external.com", ".EXTERNAL.COM."):
+                aliases.append(
+                    registry.async_get_or_create(
+                        "switch",
+                        DOMAIN,
+                        f"{entry.entry_id}:{json.dumps(['app', domain])}",
+                        config_entry=entry,
+                    )
+                )
+            sensor = registry.async_get_or_create(
+                "sensor",
+                DOMAIN,
+                f"{entry.entry_id}:{json.dumps(['app', '*.external.com'])}",
+                config_entry=entry,
+            )
+            registry.async_update_entity(external.entity_id, name="Keep my name")
+            hass.config_entries.async_update_entry(
+                entry,
+                options={
+                    "switches": [
+                        None,
+                        {},
+                        {"connector": "app", "domain": "https://bad"},
+                        {"connector": "app", "domain": "*.EXTERNAL.COM"},
+                    ]
+                },
+            )
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+            entries = er.async_entries_for_config_entry(registry, entry.entry_id)
+            assert len([item for item in entries if item.domain == "switch"]) == 4
+            assert registry.async_get(external.entity_id).name == "Keep my name"
+            assert registry.async_get(sensor.entity_id) is not None
+            assert all(registry.async_get(item.entity_id) is None for item in aliases)
+            for _ in range(3):
+                await entry.runtime_data.async_refresh()
+            await hass.async_block_till_done()
+            assert len(er.async_entries_for_config_entry(registry, entry.entry_id)) == 5
+            # Failed explicit deletion must keep the entity and its remote domains.
+            from homeassistant.exceptions import HomeAssistantError
+
+            reject_writes = True
+            with pytest.raises(HomeAssistantError):
+                await hass.services.async_call(
+                    DOMAIN,
+                    "remove_domains",
+                    {
+                        "entry_id": entry.entry_id,
+                        "connector": "app",
+                        "domains": ["external.com"],
+                    },
+                    blocking=True,
+                )
+            assert registry.async_get(external.entity_id) is not None
+            assert "external.com" in domains
+            reject_writes = False
+            # An external ACL deletion keeps the same switch, now Off.
+            domains[:] = []
+            version += 1
+            await entry.runtime_data.async_refresh()
+            await hass.async_block_till_done()
+            assert hass.states.get(external.entity_id).state == "off"
+            # Explicit Delete can select an Off domain missing from the ACL.
+            options = await hass.config_entries.options.async_init(entry.entry_id)
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"connector": "app", "action": "remove"}
+            )
+            assert options["step_id"] == "change"
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"existing_domain": "external.com"}
+            )
+            assert options["reason"] == "updated"
+            await hass.async_block_till_done()
+            assert registry.async_get(external.entity_id) is None
+            assert hass.states.get(external.entity_id) is None
+            assert {
+                "connector": "app",
+                "domain": "*.EXTERNAL.COM",
+            } not in entry.options["switches"]
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+            await entry.runtime_data.async_refresh()
+            await hass.async_block_till_done()
+            assert registry.async_get(external.entity_id) is None
+            assert hass.states.get(initial.entity_id).state == "off"
+            assert hass.states.get(added.entity_id).state == "off"
+            # A later explicit Add discovers exactly one switch again.
+            await hass.services.async_call(
+                DOMAIN,
+                "add_domains",
+                {
+                    "entry_id": entry.entry_id,
+                    "connector": "app",
+                    "domains": ["external.com"],
+                },
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            assert hass.states.get(external.entity_id).state == "on"
             assert await hass.config_entries.async_unload(entry.entry_id)
     finally:
         await hass.async_stop(force=True)
         await runner.cleanup()
+
+
+async def test_bundled_brand_images_are_served_by_home_assistant(tmp_path):
+    brands = pytest.importorskip("homeassistant.components.brands")
+    (tmp_path / "custom_components").symlink_to(
+        Path("custom_components").resolve(), target_is_directory=True
+    )
+    hass = HomeAssistant(str(tmp_path))
+    loader.async_setup(hass)
+    try:
+        view = brands.BrandsIntegrationView(hass)
+        for path in Path("custom_components/tailscale_updator/brand").glob("*.png"):
+            expected = path.read_bytes()
+            response = await view._serve_from_custom_integration(DOMAIN, path.name)
+            assert response is not None
+            assert response.content_type == "image/png"
+            assert response.body == expected
+    finally:
+        await hass.async_stop(force=True)

@@ -4,9 +4,8 @@
     "step": {
       "user": {
         "title": "Tailscale OAuth client",
-        "description": "Enter OAuth client credentials with policy_file write scope. The default tailnet value - selects the OAuth client’s own tailnet. Existing ACL domains become switches automatically.",
+        "description": "Enter an OAuth Client ID and Secret with policy_file write permission. The client’s tailnet is selected automatically. Existing app connector domains become switches.",
         "data": {
-          "tailnet": "Tailnet ID (use - for this OAuth client’s tailnet)",
           "client_id": "OAuth Client ID",
           "client_secret": "OAuth Client Secret"
         }
@@ -22,30 +21,29 @@
     "error": {
       "invalid_auth": "OAuth credentials were rejected.",
       "cannot_connect": "Could not reach the Tailscale API or obtain an OAuth token. Check connectivity and try again.",
-      "invalid_tailnet": "Enter a tailnet ID or -.",
-      "policy_forbidden": "Tailscale ACL API returned HTTP 403. Check the OAuth client’s tailnet and policy_file scope.",
-      "tailnet_not_found": "Tailscale ACL API returned HTTP 404. Check the tailnet ID or use - for this OAuth client’s tailnet.",
+      "policy_forbidden": "Tailscale ACL API returned HTTP 403. Check the OAuth client’s policy_file permission and access to its tailnet.",
+      "tailnet_not_found": "Tailscale ACL API returned HTTP 404. The OAuth client’s tailnet policy could not be found.",
       "api_error": "Tailscale ACL API returned an error. Check the Home Assistant log for the HTTP status.",
-      "invalid_policy": "Tailscale returned a policy that this integration could not parse. Check the Home Assistant log."
+      "invalid_policy": "The policy returned by Tailscale could not be parsed. Check the Home Assistant log."
     },
     "abort": {
-      "already_configured": "This tailnet is already configured.",
+      "already_configured": "This OAuth client is already configured.",
       "reauth_successful": "OAuth credentials updated."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Manage app domains",
-        "description": "Choose an existing app and add, remove, or rename a domain pair.",
+        "title": "Manage app connector domains",
+        "description": "Choose an existing app connector and add, remove, or rename a domain pair.",
         "data": {
           "connector": "App connector name",
           "action": "Action"
         }
       },
       "change": {
-        "title": "Edit {connector} domains",
-        "description": "The parent domain and its wildcard are saved as a pair. Select an existing domain to remove or rename it.",
+        "title": "Edit domains for {connector}",
+        "description": "The domain and *.domain are saved as a pair. Delete removes the switch too, including domains already absent from the ACL.",
         "data": {
           "existing_domain": "Existing domain",
           "domain": "Domain"
@@ -54,14 +52,90 @@
     },
     "error": {
       "invalid_auth": "OAuth credentials were rejected.",
-      "invalid_domains": "Check the domain and current app list.",
+      "invalid_domains": "Check the domain format and the app connector’s current domain list.",
       "cannot_connect": "Could not save or refresh the policy."
     },
     "abort": {
       "cannot_connect": "Could not read the policy.",
-      "no_connectors": "No editable explicit-domain apps found.",
-      "no_domains": "This app has no domains yet.",
-      "updated": "ACL domains updated."
+      "no_connectors": "No editable app connectors with an explicit domain list were found.",
+      "no_domains": "This app connector has no domains yet.",
+      "updated": "ACL domains updated.",
+      "invalid_auth": "OAuth credentials were rejected."
+    }
+  },
+  "selector": {
+    "domain_action": {
+      "options": {
+        "add": "Add",
+        "remove": "Delete",
+        "rename": "Rename"
+      }
+    }
+  },
+  "services": {
+    "get_acl": {
+      "name": "Get ACL",
+      "description": "Read the current JSONC policy and ETag. Administrator access is required.",
+      "fields": {
+        "entry_id": {
+          "name": "Integration",
+          "description": "Select the configured Tailscale Updator integration."
+        }
+      }
+    },
+    "set_acl": {
+      "name": "Set ACL",
+      "description": "Replace the complete JSONC policy using the ETag returned by Get ACL. Administrator access is required.",
+      "fields": {
+        "entry_id": {
+          "name": "Integration",
+          "description": "Select the configured Tailscale Updator integration."
+        },
+        "policy": {
+          "name": "Policy",
+          "description": "Complete JSONC/HuJSON policy document."
+        },
+        "expected_etag": {
+          "name": "Expected ETag",
+          "description": "ETag returned by Get ACL. Prevents overwriting concurrent changes."
+        }
+      }
+    },
+    "add_domains": {
+      "name": "Add domains",
+      "description": "Add each domain and its wildcard as a pair to an existing app connector. Administrator access is required.",
+      "fields": {
+        "entry_id": {
+          "name": "Integration",
+          "description": "Select the configured Tailscale Updator integration."
+        },
+        "connector": {
+          "name": "App connector name",
+          "description": "Name of the app connector in the policy, not a node name or tag."
+        },
+        "domains": {
+          "name": "Domains",
+          "description": "List of domain names. Each domain and its wildcard are managed together."
+        }
+      }
+    },
+    "remove_domains": {
+      "name": "Remove domains",
+      "description": "Delete each domain and its wildcard from the ACL and remove their Home Assistant switch. To keep an Off switch, use Turn off instead. Administrator access is required.",
+      "fields": {
+        "entry_id": {
+          "name": "Integration",
+          "description": "Select the configured Tailscale Updator integration."
+        },
+        "connector": {
+          "name": "App connector name",
+          "description": "Name of the app connector in the policy, not a node name or tag."
+        },
+        "domains": {
+          "name": "Domains",
+          "description": "List of domain names. Each domain and its wildcard are managed together."
+        }
+      }
     }
   }
 }

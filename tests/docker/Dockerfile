@@ -8,4 +8,4 @@ RUN python -m pip install --no-cache-dir \
     'pytest-asyncio>=0.25,<2' \
     'ruff>=0.11,<1'
 
-CMD ["/bin/sh", "-c", "ruff check . && ruff format --check . && python -m pytest tests/test_policy.py tests/test_container_compat.py -q"]
+CMD ["/bin/sh", "-c", "ruff check . && ruff format --check . && python -m pytest tests/test_policy.py tests/test_container_compat.py tests/test_translations.py -q"]

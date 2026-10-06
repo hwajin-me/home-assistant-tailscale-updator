@@ -11,9 +11,11 @@ from homeassistant.config_entries import ConfigEntries, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from test_api import ACL, policy, token
+from test_api import policy, token
 
-from custom_components.tailscale_updator.const import DOMAIN
+from custom_components.tailscale_updator.const import API_BASE, DOMAIN
+
+ACL = f"{API_BASE}/tailnet/-/acl"
 
 
 async def test_real_flow_setup_options_switch_and_unload(tmp_path):
@@ -56,7 +58,6 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
                 DOMAIN,
                 context={"source": "user"},
                 data={
-                    "tailnet": "example.com",
                     "client_id": "id",
                     "client_secret": "secret",
                 },
@@ -130,7 +131,8 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
             assert options["reason"] == "updated"
             await hass.async_block_till_done()
             assert server_domains == []
-            assert hass.states.get(c_entity.entity_id).state == "off"
+            assert hass.states.get(c_entity.entity_id) is None
+            assert er.async_get(hass).async_get(c_entity.entity_id) is None
             # A legacy wildcard-only registry entry is folded into its pair.
             assert await hass.config_entries.async_unload(entry.entry_id)
             legacy = er.async_get(hass).async_get_or_create(
@@ -145,7 +147,7 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
             entities = er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
             )
-            assert len(entities) == 3
+            assert len(entities) == 2
             assert er.async_get(hass).async_get(legacy.entity_id) is None
             assert all(hass.states.get(e.entity_id).state == "off" for e in entities)
             # An external ACL edit is discovered without reconfiguring HA.
@@ -155,7 +157,7 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
             entities = er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
             )
-            assert len(entities) == 4
+            assert len(entities) == 3
             external = next(e for e in entities if "external.com" in e.unique_id)
             assert hass.states.get(external.entity_id).state == "on"
             # HA actions use the same pair semantics and update discovered entities.
@@ -175,7 +177,7 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
             entities = er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
             )
-            assert len(entities) == 5
+            assert len(entities) == 4
             result = await hass.services.async_call(
                 DOMAIN,
                 "get_acl",

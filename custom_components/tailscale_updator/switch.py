@@ -1,34 +1,14 @@
 """One switch for each app connector domain and its wildcard partner."""
 
-import json
-
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_SWITCHES, DOMAIN
+from .const import DOMAIN
 from .policy import PolicyError, domain_base, domain_bases, normalize_domain
-
-
-def unique_id(entry_id: str, connector: str, domain: str) -> str:
-    return (
-        f"{entry_id}:{json.dumps([connector, domain_base(domain)], ensure_ascii=False)}"
-    )
-
-
-def registered_pair(entry_id: str, unique: str) -> tuple[str, str] | None:
-    prefix = f"{entry_id}:"
-    if not unique.startswith(prefix):
-        return None
-    try:
-        connector, domain = json.loads(unique[len(prefix) :])
-        if not isinstance(connector, str) or not isinstance(domain, str):
-            return None
-        return connector, domain_base(domain)
-    except (ValueError, TypeError):
-        return None
+from .registry import domain_entries, registered_pair, remembered_pairs, unique_id
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -67,7 +47,7 @@ class DomainSwitchManager:
         # Previously seen domains survive an Off toggle and a HA restart.
         # Migrate legacy single-wildcard entity IDs to their parent ID.
         registry = er.async_get(self.hass)
-        entries = er.async_entries_for_config_entry(registry, self.entry.entry_id)
+        entries = domain_entries(self.hass, self.entry)
         registered = {item.unique_id for item in entries}
         for item in entries:
             parsed = registered_pair(self.entry.entry_id, item.unique_id)
@@ -83,8 +63,7 @@ class DomainSwitchManager:
                         item.entity_id, new_unique_id=canonical
                     )
                     registered.add(canonical)
-        for item in self.entry.options.get(CONF_SWITCHES, []):
-            pairs.add((item["connector"], domain_base(item["domain"])))
+        pairs.update(remembered_pairs(self.hass, self.entry))
         new = [
             (connector, base)
             for connector, base in sorted(pairs)
@@ -94,9 +73,14 @@ class DomainSwitchManager:
             unique_id(self.entry.entry_id, connector, base) for connector, base in new
         )
         if new:
-            self.async_add_entities(
-                DomainSwitch(self.entry, connector, base) for connector, base in new
-            )
+            entities = []
+            for connector, base in new:
+                entity = DomainSwitch(self.entry, connector, base)
+                entity.async_on_remove(
+                    lambda uid=entity.unique_id: self.known.discard(uid)
+                )
+                entities.append(entity)
+            self.async_add_entities(entities)
 
 
 class DomainSwitch(CoordinatorEntity, SwitchEntity):

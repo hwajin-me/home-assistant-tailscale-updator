@@ -162,3 +162,48 @@ def test_user_acl_shape_with_grants_ssh_and_two_app_connectors():
     ]
     assert Policy(changed).root.value["grants"] == parsed.root.value["grants"]
     assert Policy(changed).domains("stream-japan") == parsed.domains("stream-japan")
+
+
+def test_add_update_delete_normalizes_target_without_touching_other_domains():
+    source = POLICY.replace(
+        '"example.com", "*.example.com",',
+        '"EXAMPLE.COM.", ".example.com", "*.example.com", "*.EXAMPLE.COM", '
+        '"untouched.com", "untouched.com",',
+    )
+    added = Policy(source).set_domains(
+        "Streaming", ["*.example.com", ".example.com"], True
+    )
+    assert Policy(added).domains("Streaming") == [
+        "example.com",
+        "*.example.com",
+        "untouched.com",
+        "untouched.com",
+    ]
+    same = Policy(added).change_domain_pairs(
+        "Streaming", ["EXAMPLE.COM."], ["*.example.com"]
+    )
+    assert same == added
+    renamed = Policy(added).change_domain_pairs(
+        "Streaming", ["new.com"], ["example.com"]
+    )
+    assert Policy(renamed).domains("Streaming") == [
+        "untouched.com",
+        "untouched.com",
+        "new.com",
+        "*.new.com",
+    ]
+    deleted = Policy(renamed).set_domains("Streaming", ["*.new.com"], False)
+    assert Policy(deleted).domains("Streaming") == ["untouched.com", "untouched.com"]
+    assert Policy(deleted).set_domains("Streaming", ["new.com"], False) == deleted
+    assert Policy(deleted).domains("Other") == ["other.com"]
+
+
+def test_update_into_existing_domain_merges_one_pair():
+    source = POLICY.replace(
+        '"example.com", "*.example.com",',
+        '"example.com", "*.example.com", "new.com", "*.NEW.COM", "new.com",',
+    )
+    result = Policy(source).change_domain_pairs(
+        "Streaming", ["new.com"], ["example.com"]
+    )
+    assert Policy(result).domains("Streaming") == ["new.com", "*.new.com"]

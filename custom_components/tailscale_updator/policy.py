@@ -149,9 +149,20 @@ class Policy:
         current = self.domains(name)
         add_bases = {domain_base(domain) for domain in add}
         remove_bases = {domain_base(domain) for domain in remove}
-        if add_bases & remove_bases:
-            raise PolicyError("A domain cannot be added and removed together")
-        updated = [d for d in current if domain_base(d) not in remove_bases]
+        # Renaming to the same normalized domain is an idempotent pair update.
+        remove_bases -= add_bases
+        updated = []
+        seen = set()
+        for value in current:
+            base = domain_base(value)
+            if base in remove_bases:
+                continue
+            if base in add_bases:
+                value = normalize_domain(value)
+                if value in seen:
+                    continue
+                seen.add(value)
+            updated.append(value)
         existing = {normalize_domain(d) for d in updated}
         for base in sorted(add_bases):
             for member in (base, f"*.{base}"):

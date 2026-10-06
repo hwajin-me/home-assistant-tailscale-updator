@@ -12,6 +12,7 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     Unauthorized,
 )
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from test_api import policy
 
@@ -34,6 +35,7 @@ from custom_components.tailscale_updator.switch import DomainSwitch
 async def hass(tmp_path):
     instance = HomeAssistant(str(tmp_path))
     instance.config_entries = MagicMock()
+    await er.async_load(instance)
     yield instance
     await instance.async_block_till_done()
     await instance.async_stop(force=True)
@@ -107,29 +109,44 @@ async def test_user_flow_and_auth_errors(hass):
     flow.hass = hass
     flow.async_set_unique_id = AsyncMock()
     flow._abort_if_unique_id_configured = MagicMock()
-    credentials = {
-        "tailnet": "Example.COM",
-        "client_id": "id",
-        "client_secret": "secret",
+    credentials = {"client_id": "id", "client_secret": "secret"}
+    form = await flow.async_step_user()
+    assert {str(key) for key in form["data_schema"].schema} == {
+        "client_id",
+        "client_secret",
     }
     with patch.object(flow, "_validate", AsyncMock()):
         result = await flow.async_step_user(credentials)
         assert result["type"] == "create_entry"
-        assert result["data"]["tailnet"] == "example.com"
+        assert result["data"] == credentials
+        assert result["title"] == "Tailscale OAuth"
+        flow.async_set_unique_id.assert_awaited_with("oauth:id")
     with patch.object(flow, "_validate", AsyncMock(side_effect=AuthError())):
         result = await flow.async_step_user(credentials)
         assert result["errors"]["base"] == "invalid_auth"
-    with patch.object(flow, "_validate", AsyncMock()):
-        result = await flow.async_step_user({**credentials, "tailnet": "-"})
-        assert result["type"] == "create_entry"
-        flow.async_set_unique_id.assert_awaited_with("oauth:id")
-        result = await flow.async_step_user(
-            {"client_id": "id", "client_secret": "secret"}
+
+
+async def test_validation_always_uses_oauth_tailnet(hass):
+    flow = ConfigFlow()
+    flow.hass = hass
+    with (
+        patch(
+            "custom_components.tailscale_updator.config_flow.async_get_clientsession"
+        ),
+        patch(
+            "custom_components.tailscale_updator.config_flow.TailscaleClient"
+        ) as factory,
+    ):
+        factory.return_value.get_policy = AsyncMock()
+        await flow._validate(
+            {
+                "tailnet": "old-name.example",
+                "client_id": "id",
+                "client_secret": "secret",
+            }
         )
-        assert result["data"]["tailnet"] == "-"
-    assert (await flow.async_step_user({**credentials, "tailnet": " "}))["errors"][
-        "base"
-    ] == "invalid_tailnet"
+        assert factory.call_args.args[1:] == ("-", "id", "secret")
+        factory.return_value.get_policy.assert_awaited_once()
 
 
 @pytest.mark.parametrize(
@@ -149,23 +166,28 @@ async def test_user_flow_reports_policy_read_failure(hass, error, expected):
     flow._abort_if_unique_id_configured = MagicMock()
     with patch.object(flow, "_validate", AsyncMock(side_effect=error)):
         result = await flow.async_step_user(
-            {"tailnet": "-", "client_id": "id", "client_secret": "secret"}
+            {"client_id": "id", "client_secret": "secret"}
         )
     assert result["errors"]["base"] == expected
 
 
-async def test_reauth_preserves_tailnet(hass, entry):
+async def test_reauth_updates_client_identity_and_removes_legacy_tailnet(hass, entry):
     flow = ConfigFlow()
     flow.hass = hass
     flow._get_reauth_entry = MagicMock(return_value=entry)
     flow.async_update_reload_and_abort = MagicMock(return_value={"type": "abort"})
     with patch.object(flow, "_validate", AsyncMock()) as validate:
         await flow.async_step_reauth_confirm(
-            {"client_id": "new", "client_secret": "new-secret"}
+            {"client_id": " new ", "client_secret": " new-secret "}
         )
-        assert validate.call_args.args[0]["tailnet"] == "example.com"
+        assert validate.call_args.args[0] == {
+            "client_id": "new",
+            "client_secret": "new-secret",
+        }
         flow.async_update_reload_and_abort.assert_called_once_with(
-            entry, data_updates={"client_id": "new", "client_secret": "new-secret"}
+            entry,
+            data={"client_id": "new", "client_secret": "new-secret"},
+            unique_id="oauth:new",
         )
 
 
@@ -250,7 +272,50 @@ async def test_setup_and_unload(hass, entry):
         factory.return_value.write_lock = asyncio.Lock()
         factory.return_value.get_policy = AsyncMock(return_value=Snapshot("{}", '"1"'))
         assert await async_setup_entry(hass, entry)
+        assert factory.call_args.args[1:] == ("-", "id", "secret")
         assert entry.runtime_data.data.text == "{}"
         assert hass.services.has_service(DOMAIN, "get_acl")
         assert await async_unload_entry(hass, entry)
         entry.add_update_listener.assert_called_once()
+
+
+async def test_reauth_rejects_client_already_used_by_another_entry(hass, entry):
+    flow = ConfigFlow()
+    flow.hass = hass
+    flow._get_reauth_entry = MagicMock(return_value=entry)
+    flow._async_current_entries = MagicMock(
+        return_value=[
+            entry,
+            SimpleNamespace(entry_id="another", data={"client_id": "other"}),
+        ]
+    )
+    with patch.object(flow, "_validate", AsyncMock()) as validate:
+        result = await flow.async_step_reauth_confirm(
+            {"client_id": "other", "client_secret": "secret"}
+        )
+    assert result["reason"] == "already_configured"
+    validate.assert_not_awaited()
+
+
+@pytest.mark.parametrize("step", ["init", "change"])
+async def test_options_policy_read_auth_failure_starts_reauth(hass, entry, step):
+    coordinator = make_coordinator(hass, entry)
+    coordinator.client.get_policy.side_effect = AuthError("revoked")
+    flow = OptionsFlow()
+    flow.hass = hass
+    flow._config_entry = entry
+    result = await getattr(flow, f"async_step_{step}")()
+    assert result["reason"] == "invalid_auth"
+    entry.async_start_reauth.assert_called_once_with(hass)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"app": "a.com", "other": "b.com"}, "ab", ["", "a.com"], ["app"], ["app", 1]],
+)
+def test_invalid_registered_pair_is_ignored(value):
+    import json
+
+    from custom_components.tailscale_updator.switch import registered_pair
+
+    assert registered_pair("entry", f"entry:{json.dumps(value)}") is None

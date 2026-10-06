@@ -4,48 +4,46 @@
     "step": {
       "user": {
         "title": "Tailscale OAuth 클라이언트",
-        "description": "policy_file 쓰기 권한이 있는 OAuth Client ID/Secret을 입력하세요. Tailnet 기본값 -는 이 OAuth 클라이언트의 tailnet을 뜻합니다. 기존 ACL 도메인은 자동으로 스위치가 됩니다.",
+        "description": "policy_file 쓰기 권한이 있는 OAuth 클라이언트 ID와 시크릿을 입력하세요. 클라이언트가 속한 tailnet을 자동으로 사용합니다. 기존 앱 커넥터 도메인은 스위치로 생성됩니다.",
         "data": {
-          "tailnet": "Tailnet ID (현재 OAuth 클라이언트의 tailnet은 -)",
-          "client_id": "OAuth Client ID",
-          "client_secret": "OAuth Client Secret"
+          "client_id": "OAuth 클라이언트 ID",
+          "client_secret": "OAuth 클라이언트 시크릿"
         }
       },
       "reauth_confirm": {
         "title": "OAuth 인증 정보 갱신",
         "data": {
-          "client_id": "OAuth Client ID",
-          "client_secret": "OAuth Client Secret"
+          "client_id": "OAuth 클라이언트 ID",
+          "client_secret": "OAuth 클라이언트 시크릿"
         }
       }
     },
     "error": {
       "invalid_auth": "OAuth 인증 정보가 거부되었습니다.",
-      "cannot_connect": "Tailscale API에 연결하거나 OAuth 토큰을 발급받지 못했습니다. 연결 상태를 확인하세요.",
-      "invalid_tailnet": "Tailnet ID 또는 -를 입력하세요.",
-      "policy_forbidden": "Tailscale ACL API가 HTTP 403을 반환했습니다. OAuth 클라이언트의 tailnet과 policy_file 권한을 확인하세요.",
-      "tailnet_not_found": "Tailscale ACL API가 HTTP 404를 반환했습니다. Tailnet ID를 확인하거나 -를 사용하세요.",
+      "cannot_connect": "Tailscale API에 연결하거나 OAuth 토큰을 발급받지 못했습니다. 연결 상태를 확인하고 다시 시도하세요.",
+      "policy_forbidden": "Tailscale ACL API가 HTTP 403을 반환했습니다. OAuth 클라이언트의 policy_file 권한과 해당 tailnet 접근 권한을 확인하세요.",
+      "tailnet_not_found": "Tailscale ACL API가 HTTP 404를 반환했습니다. OAuth 클라이언트가 속한 tailnet의 정책을 찾을 수 없습니다.",
       "api_error": "Tailscale ACL API가 오류를 반환했습니다. Home Assistant 로그에서 HTTP 상태 코드를 확인하세요.",
-      "invalid_policy": "Tailscale 정책 응답을 해석하지 못했습니다. Home Assistant 로그를 확인하세요."
+      "invalid_policy": "Tailscale이 반환한 정책을 해석하지 못했습니다. Home Assistant 로그를 확인하세요."
     },
     "abort": {
-      "already_configured": "이미 설정한 tailnet입니다.",
+      "already_configured": "이미 설정된 OAuth 클라이언트입니다.",
       "reauth_successful": "OAuth 인증 정보를 갱신했습니다."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "앱 도메인 관리",
-        "description": "Tailscale 정책의 기존 앱을 선택하고 도메인 추가·제거·수정을 선택하세요.",
+        "title": "앱 커넥터 도메인 관리",
+        "description": "기존 앱 커넥터를 선택하고 도메인 쌍을 추가·제거하거나 이름을 변경하세요.",
         "data": {
-          "connector": "App connector 이름",
+          "connector": "앱 커넥터 이름",
           "action": "작업"
         }
       },
       "change": {
         "title": "{connector} 도메인 편집",
-        "description": "입력한 도메인과 *.도메인을 한 쌍으로 ACL에 저장합니다. 현재 목록에서 하나를 선택해 제거하거나 이름을 바꿀 수 있습니다.",
+        "description": "도메인과 *.도메인을 한 쌍으로 저장합니다. 삭제하면 스위치도 제거됩니다. ACL에 이미 없는 Off 도메인도 삭제할 수 있습니다.",
         "data": {
           "existing_domain": "기존 도메인",
           "domain": "도메인"
@@ -53,15 +51,91 @@
       }
     },
     "error": {
-      "invalid_auth": "OAuth 인증 정보가 만료되었거나 거부되었습니다.",
-      "invalid_domains": "도메인 형식 또는 앱의 현재 도메인 목록을 확인하세요.",
-      "cannot_connect": "정책을 저장하거나 다시 읽을 수 없습니다."
+      "invalid_auth": "OAuth 인증 정보가 거부되었습니다.",
+      "invalid_domains": "도메인 형식과 앱 커넥터의 현재 도메인 목록을 확인하세요.",
+      "cannot_connect": "정책을 저장하거나 새로 불러올 수 없습니다."
     },
     "abort": {
       "cannot_connect": "정책을 읽을 수 없습니다.",
-      "no_connectors": "수정 가능한 명시적 도메인 앱이 없습니다.",
-      "no_domains": "이 앱에는 현재 도메인이 없습니다.",
-      "updated": "ACL 도메인을 수정했습니다."
+      "no_connectors": "명시적 도메인 목록이 있는 편집 가능한 앱 커넥터를 찾지 못했습니다.",
+      "no_domains": "이 앱 커넥터에는 아직 도메인이 없습니다.",
+      "updated": "ACL 도메인을 수정했습니다.",
+      "invalid_auth": "OAuth 인증 정보가 거부되었습니다."
+    }
+  },
+  "selector": {
+    "domain_action": {
+      "options": {
+        "add": "추가",
+        "remove": "삭제",
+        "rename": "이름 변경"
+      }
+    }
+  },
+  "services": {
+    "get_acl": {
+      "name": "ACL 가져오기",
+      "description": "현재 JSONC 정책과 ETag를 읽습니다. 관리자 권한이 필요합니다.",
+      "fields": {
+        "entry_id": {
+          "name": "통합 구성요소",
+          "description": "설정된 Tailscale Updator 통합 구성요소를 선택하세요."
+        }
+      }
+    },
+    "set_acl": {
+      "name": "ACL 설정",
+      "description": "ACL 가져오기에서 받은 ETag를 사용해 JSONC 정책 전체를 교체합니다. 관리자 권한이 필요합니다.",
+      "fields": {
+        "entry_id": {
+          "name": "통합 구성요소",
+          "description": "설정된 Tailscale Updator 통합 구성요소를 선택하세요."
+        },
+        "policy": {
+          "name": "정책",
+          "description": "전체 JSONC/HuJSON 정책 문서입니다."
+        },
+        "expected_etag": {
+          "name": "예상 ETag",
+          "description": "ACL 가져오기에서 반환된 ETag입니다. 다른 변경 사항을 덮어쓰지 않도록 보호합니다."
+        }
+      }
+    },
+    "add_domains": {
+      "name": "도메인 추가",
+      "description": "기존 앱 커넥터에 각 도메인과 와일드카드를 한 쌍으로 추가합니다. 관리자 권한이 필요합니다.",
+      "fields": {
+        "entry_id": {
+          "name": "통합 구성요소",
+          "description": "설정된 Tailscale Updator 통합 구성요소를 선택하세요."
+        },
+        "connector": {
+          "name": "앱 커넥터 이름",
+          "description": "정책에 정의된 앱 커넥터 이름입니다. 노드 이름이나 태그가 아닙니다."
+        },
+        "domains": {
+          "name": "도메인 목록",
+          "description": "도메인 이름 목록입니다. 각 도메인과 와일드카드를 함께 관리합니다."
+        }
+      }
+    },
+    "remove_domains": {
+      "name": "도메인 제거",
+      "description": "ACL에서 각 도메인과 와일드카드를 삭제하고 Home Assistant 스위치도 제거합니다. Off 상태로 보관하려면 스위치를 끄세요. 관리자 권한이 필요합니다.",
+      "fields": {
+        "entry_id": {
+          "name": "통합 구성요소",
+          "description": "설정된 Tailscale Updator 통합 구성요소를 선택하세요."
+        },
+        "connector": {
+          "name": "앱 커넥터 이름",
+          "description": "정책에 정의된 앱 커넥터 이름입니다. 노드 이름이나 태그가 아닙니다."
+        },
+        "domains": {
+          "name": "도메인 목록",
+          "description": "도메인 이름 목록입니다. 각 도메인과 와일드카드를 함께 관리합니다."
+        }
+      }
     }
   }
 }

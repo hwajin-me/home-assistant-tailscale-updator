@@ -4,7 +4,6 @@ from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET, Platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import TailscaleClient
-from .const import CONF_TAILNET
 from .coordinator import PolicyCoordinator
 from .services import async_setup_services
 
@@ -14,7 +13,7 @@ PLATFORMS = [Platform.SWITCH]
 async def async_setup_entry(hass, entry):
     client = TailscaleClient(
         async_get_clientsession(hass),
-        entry.data[CONF_TAILNET],
+        "-",
         entry.data[CONF_CLIENT_ID],
         entry.data[CONF_CLIENT_SECRET],
     )

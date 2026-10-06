@@ -6,12 +6,14 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ApiError, ApiHttpError, AuthError, TailscaleClient
-from .const import CONF_TAILNET, DOMAIN
+from .const import DOMAIN
 from .policy import PolicyError, domain_base, domain_bases
+from .registry import remembered_pairs
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,16 +32,15 @@ def policy_read_error(err: ApiError | PolicyError) -> str:
     return "cannot_connect"
 
 
-def credentials_schema(reauth=False):
-    fields = {
-        vol.Required(CONF_CLIENT_ID): str,
-        vol.Required(CONF_CLIENT_SECRET): selector.TextSelector(
-            selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-        ),
-    }
-    if not reauth:
-        fields = {vol.Required(CONF_TAILNET, default="-"): str, **fields}
-    return vol.Schema(fields)
+def credentials_schema():
+    return vol.Schema(
+        {
+            vol.Required(CONF_CLIENT_ID): str,
+            vol.Required(CONF_CLIENT_SECRET): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+            ),
+        }
+    )
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -48,7 +49,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _validate(self, data):
         client = TailscaleClient(
             async_get_clientsession(self.hass),
-            data[CONF_TAILNET],
+            "-",
             data[CONF_CLIENT_ID],
             data[CONF_CLIENT_SECRET],
         )
@@ -57,28 +58,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:
-            user_input = dict(user_input)
-            user_input[CONF_TAILNET] = user_input.get(CONF_TAILNET, "-").strip().lower()
-            if not user_input[CONF_TAILNET]:
-                errors["base"] = "invalid_tailnet"
+            user_input = {
+                CONF_CLIENT_ID: user_input[CONF_CLIENT_ID].strip(),
+                CONF_CLIENT_SECRET: user_input[CONF_CLIENT_SECRET].strip(),
+            }
+            await self.async_set_unique_id(f"oauth:{user_input[CONF_CLIENT_ID]}")
+            self._abort_if_unique_id_configured()
+            # Older entries used the tailnet as their unique ID.
+            self._async_abort_entries_match(
+                {CONF_CLIENT_ID: user_input[CONF_CLIENT_ID]}
+            )
+            try:
+                await self._validate(user_input)
+            except AuthError:
+                errors["base"] = "invalid_auth"
+            except (ApiError, PolicyError) as err:
+                errors["base"] = policy_read_error(err)
             else:
-                unique_id = (
-                    f"oauth:{user_input[CONF_CLIENT_ID]}"
-                    if user_input[CONF_TAILNET] == "-"
-                    else user_input[CONF_TAILNET]
-                )
-                await self.async_set_unique_id(unique_id)
-                self._abort_if_unique_id_configured()
-                try:
-                    await self._validate(user_input)
-                except AuthError:
-                    errors["base"] = "invalid_auth"
-                except (ApiError, PolicyError) as err:
-                    errors["base"] = policy_read_error(err)
-                else:
-                    return self.async_create_entry(
-                        title=user_input[CONF_TAILNET], data=user_input
-                    )
+                return self.async_create_entry(title="Tailscale OAuth", data=user_input)
         return self.async_show_form(
             step_id="user", data_schema=credentials_schema(), errors=errors
         )
@@ -90,19 +87,38 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             entry = self._get_reauth_entry()
+            user_input = {
+                CONF_CLIENT_ID: user_input[CONF_CLIENT_ID].strip(),
+                CONF_CLIENT_SECRET: user_input[CONF_CLIENT_SECRET].strip(),
+            }
+            if any(
+                other.entry_id != entry.entry_id
+                and other.data.get(CONF_CLIENT_ID) == user_input[CONF_CLIENT_ID]
+                for other in self._async_current_entries()
+            ):
+                return self.async_abort(reason="already_configured")
             try:
-                await self._validate({**entry.data, **user_input})
+                await self._validate(user_input)
             except AuthError:
                 errors["base"] = "invalid_auth"
             except (ApiError, PolicyError) as err:
                 errors["base"] = policy_read_error(err)
             else:
                 return self.async_update_reload_and_abort(
-                    entry, data_updates=user_input
+                    entry,
+                    data={
+                        **{
+                            key: value
+                            for key, value in entry.data.items()
+                            if key != "tailnet"
+                        },
+                        **user_input,
+                    },
+                    unique_id=f"oauth:{user_input[CONF_CLIENT_ID]}",
                 )
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=credentials_schema(True),
+            data_schema=credentials_schema(),
             errors=errors,
         )
 
@@ -127,8 +143,15 @@ class OptionsFlow(config_entries.OptionsFlow):
                 except PolicyError:
                     continue
                 names.append(name)
+        except AuthError:
+            self.config_entry.async_start_reauth(self.hass)
+            return self.async_abort(reason="invalid_auth")
         except (ApiError, PolicyError):
             return self.async_abort(reason="cannot_connect")
+        names = sorted(
+            set(names)
+            | {name for name, _ in remembered_pairs(self.hass, self.config_entry)}
+        )
         if not names:
             return self.async_abort(reason="no_connectors")
         if user_input is not None:
@@ -144,7 +167,8 @@ class OptionsFlow(config_entries.OptionsFlow):
                     ),
                     vol.Required("action"): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=["add", "remove", "rename"]
+                            options=["add", "remove", "rename"],
+                            translation_key="domain_action",
                         )
                     ),
                 }
@@ -155,7 +179,23 @@ class OptionsFlow(config_entries.OptionsFlow):
         coordinator = self.config_entry.runtime_data
         try:
             snapshot = await coordinator.client.get_policy()
-            existing = sorted(domain_bases(snapshot.policy.domains(self._connector)))
+            existing = (
+                domain_bases(snapshot.policy.domains(self._connector))
+                if self._connector in snapshot.policy.connectors()
+                else set()
+            )
+            if self._action == "remove":
+                existing.update(
+                    domain
+                    for connector, domain in remembered_pairs(
+                        self.hass, self.config_entry
+                    )
+                    if connector == self._connector
+                )
+            existing = sorted(existing)
+        except AuthError:
+            self.config_entry.async_start_reauth(self.hass)
+            return self.async_abort(reason="invalid_auth")
         except (ApiError, PolicyError):
             return self.async_abort(reason="cannot_connect")
         if self._action != "add" and not existing:
@@ -172,20 +212,28 @@ class OptionsFlow(config_entries.OptionsFlow):
                 else:
                     add = [domain_base(user_input["domain"])]
                     remove = [domain_base(user_input["existing_domain"])]
-                await coordinator.client.change_domain_pairs(
-                    self._connector,
-                    add,
-                    remove,
-                    require_existing=bool(remove),
-                )
-                await coordinator.async_refresh()
-                if not coordinator.last_update_success:
-                    raise ApiError("Policy was saved but could not be refreshed")
+                if self._action == "remove":
+                    await coordinator.async_delete_domains(self._connector, remove)
+                else:
+
+                    async def change():
+                        await coordinator.client.change_domain_pairs(
+                            self._connector, add, remove, require_existing=bool(remove)
+                        )
+
+                    await coordinator.async_write(change)
             except AuthError:
                 self.config_entry.async_start_reauth(self.hass)
                 errors["base"] = "invalid_auth"
             except PolicyError:
                 errors["base"] = "invalid_domains"
+            except HomeAssistantError as err:
+                if isinstance(err.__cause__, PolicyError):
+                    errors["base"] = "invalid_domains"
+                elif isinstance(err.__cause__, AuthError):
+                    errors["base"] = "invalid_auth"
+                else:
+                    errors["base"] = "cannot_connect"
             except ApiError:
                 errors["base"] = "cannot_connect"
             else:

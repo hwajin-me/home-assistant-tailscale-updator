@@ -40,6 +40,10 @@ def async_setup_services(hass):
                 call.data["policy"],
                 call.data["expected_etag"],
             )
+        elif call.service == "remove_domains":
+            await coordinator.async_delete_domains(
+                call.data["connector"], call.data["domains"]
+            )
         else:
             await coordinator.async_write(
                 coordinator.client.set_domains,

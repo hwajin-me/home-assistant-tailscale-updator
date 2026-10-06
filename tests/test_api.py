@@ -211,3 +211,31 @@ async def test_concurrent_domain_updates_serialize(client):
 async def test_wildcard_etag_rejected_before_network(client):
     with pytest.raises(ApiError):
         await client.replace_policy("{}", "*")
+
+
+async def test_same_domain_update_does_not_write(client):
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body=policy(["example.com", "*.example.com"]))
+        await client.change_domain_pairs(
+            "app", ["EXAMPLE.COM."], ["*.example.com"], require_existing=True
+        )
+        assert all(str(k[1]) != ACL or k[0] == "GET" for k in mock.requests)
+
+
+async def test_update_aborts_if_original_domain_disappears_during_conflict(client):
+    from custom_components.tailscale_updator.policy import PolicyError
+
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body=policy(["old.com", "*.old.com"]), headers={"ETag": '"1"'})
+        mock.post(ACL, status=412)
+        mock.get(ACL, body=policy(["external.com"]), headers={"ETag": '"2"'})
+        with pytest.raises(PolicyError, match="no longer exists"):
+            await client.change_domain_pairs(
+                "app", ["new.com"], ["old.com"], require_existing=True
+            )
+        calls = next(
+            v for k, v in mock.requests.items() if k[0] == "POST" and str(k[1]) == ACL
+        )
+        assert len(calls) == 1
