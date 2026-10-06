@@ -9,7 +9,7 @@ Home Assistant **2025.4.4 이상**이 필요합니다.
 1. `custom_components/tailscale_updator` 폴더 전체를 HA의 `/config/custom_components/tailscale_updator`에 복사하고 HA를 재시작합니다. 릴리스 ZIP은 이 폴더 안에 압축 해제합니다.
 2. 또는 HACS → 사용자 지정 저장소에 이 저장소를 **Integration**으로 추가하고 설치합니다. GitHub에 저장소와 릴리스가 게시되어 있어야 합니다.
 3. Tailscale 관리 콘솔의 **Trust credentials / OAuth clients**에서 OAuth 클라이언트를 만들고 **policy_file 쓰기** 권한을 부여합니다. 예전 UI에서는 `acl`로 표시될 수 있습니다. 장치 인증 키(`tskey-auth`)나 일반 API 키가 아닙니다.
-4. HA → 설정 → 기기 및 서비스 → 통합 구성요소 추가 → **Tailscale Updator**에서 tailnet 이름, Client ID, Client Secret을 입력합니다. `-` 대신 실제 tailnet 이름을 사용합니다.
+4. HA → 설정 → 기기 및 서비스 → 통합 구성요소 추가 → **Tailscale Updator**에서 Client ID와 Client Secret을 입력합니다. Tailnet은 기본값 `-`를 사용하면 OAuth 클라이언트가 속한 tailnet으로 자동 지정됩니다. 실제 tailnet ID를 입력해도 됩니다.
 5. ACL에 이미 있는 app connector 도메인은 첫 연결 때 자동으로 switch로 생성됩니다. 통합의 **구성**에서 앱 이름을 선택해 도메인 쌍을 직접 추가·제거·이름 변경할 수 있습니다.
 
 이 인증은 OAuth 2.0 **client credentials** 방식입니다. 브라우저 리디렉션 로그인이나 refresh token을 사용하지 않습니다. 요청 시 토큰 만료 60초 전부터 새 토큰을 발급하고, API가 401을 반환하면 한 번 재발급하여 재시도합니다. HA 재시작 후 저장된 자격 증명으로 다시 토큰을 발급합니다. 폐기된 자격 증명은 HA 재인증 흐름으로 갱신할 수 있습니다.

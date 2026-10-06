@@ -19,6 +19,14 @@ class AuthError(ApiError):
     """Client credentials rejected."""
 
 
+class ApiHttpError(ApiError):
+    """An API endpoint returned an unsuccessful HTTP status."""
+
+    def __init__(self, status: int):
+        self.status = status
+        super().__init__(f"Tailscale API returned HTTP {status}")
+
+
 class ConflictError(ApiError):
     """The policy changed since it was read."""
 
@@ -104,12 +112,8 @@ class TailscaleClient:
                         raise AuthError("API authentication failed")
                     if response.status == 412:
                         raise ConflictError("Policy changed; reload it before retrying")
-                    if response.status == 403:
-                        raise ApiError(
-                            "OAuth client needs policy_file read/write permission"
-                        )
                     if not 200 <= response.status < 300:
-                        raise ApiError(f"Tailscale API returned HTTP {response.status}")
+                        raise ApiHttpError(response.status)
                     return await response.text(), response.headers.get("ETag", "")
             except (ClientError, TimeoutError) as err:
                 raise ApiError("Cannot communicate with Tailscale API") from err

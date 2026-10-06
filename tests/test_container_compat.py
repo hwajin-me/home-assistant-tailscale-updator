@@ -69,7 +69,7 @@ async def test_container_end_to_end(tmp_path):
 
     application = web.Application()
     application.router.add_post("/api/v2/oauth/token", token)
-    application.router.add_route("*", "/api/v2/tailnet/example.com/acl", acl)
+    application.router.add_route("*", "/api/v2/tailnet/-/acl", acl)
     runner = web.AppRunner(application)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -102,7 +102,7 @@ async def test_container_end_to_end(tmp_path):
                 DOMAIN,
                 context={"source": "user"},
                 data={
-                    "tailnet": "example.com",
+                    "tailnet": "-",
                     "client_id": "test-id",
                     "client_secret": "test-secret",
                 },

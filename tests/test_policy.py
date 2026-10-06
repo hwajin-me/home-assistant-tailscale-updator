@@ -123,3 +123,42 @@ def test_normalization():
     assert normalize_domain(" *.EXAMPLE.com. ") == "*.example.com"
     assert normalize_domain("한글.com").endswith(".com")
     assert normalize_domain(".EXAMPLE.com") == "example.com"
+
+
+def test_user_acl_shape_with_grants_ssh_and_two_app_connectors():
+    source = """{
+      "grants": [
+        {"src": ["group:user", "group:admin"], "dst": ["10.10.0.0/16"],
+         "via": ["tag:local"], "ip": ["*"]},
+        // Guest -> Japan / Stream-Japan Exit Node를 통한 인터넷
+        {"src": ["group:guest"], "dst": ["autogroup:internet"],
+         "via": ["tag:japan", "tag:stream-japan"], "ip": ["*"]},
+      ],
+      "ssh": [{"action": "check", "src": ["autogroup:member"],
+               "dst": ["autogroup:self"], "users": ["root"]}],
+      "nodeAttrs": [{"target": ["*"], "app": {
+        "tailscale.com/app-connectors": [
+          {"name": "stream-japan", "connectors": ["tag:stream-japan"],
+           "domains": ["ameba.co.jp", "*.ameba.co.jp", "music.youtube.com",
+                       "*.music.youtube.com",]},
+          {"name": "japan", "connectors": ["tag:japan"],
+           "domains": ["youtube.co.jp", "*.youtube.co.jp",]},
+        ]}}],
+      "autoApprovers": {"exitNode": ["tag:master", "tag:japan"]},
+      "groups": {"group:guest": []},
+    }"""
+    parsed = Policy(source)
+    assert set(parsed.connectors()) == {"stream-japan", "japan"}
+    assert domain_bases(parsed.domains("stream-japan")) == {
+        "ameba.co.jp",
+        "music.youtube.com",
+    }
+    changed = parsed.set_domains("japan", ["ytimg.com"], True)
+    assert Policy(changed).domains("japan") == [
+        "youtube.co.jp",
+        "*.youtube.co.jp",
+        "ytimg.com",
+        "*.ytimg.com",
+    ]
+    assert Policy(changed).root.value["grants"] == parsed.root.value["grants"]
+    assert Policy(changed).domains("stream-japan") == parsed.domains("stream-japan")

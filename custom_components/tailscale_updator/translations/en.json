@@ -4,9 +4,9 @@
     "step": {
       "user": {
         "title": "Tailscale OAuth client",
-        "description": "Enter a tailnet name and OAuth client credentials with policy_file write scope. Existing ACL domains become switches automatically. Select Configure to add, remove, or rename domain pairs.",
+        "description": "Enter OAuth client credentials with policy_file write scope. The default tailnet value - selects the OAuth client’s own tailnet. Existing ACL domains become switches automatically.",
         "data": {
-          "tailnet": "Tailnet name (not '-')",
+          "tailnet": "Tailnet ID (use - for this OAuth client’s tailnet)",
           "client_id": "OAuth Client ID",
           "client_secret": "OAuth Client Secret"
         }
@@ -21,8 +21,12 @@
     },
     "error": {
       "invalid_auth": "OAuth credentials were rejected.",
-      "cannot_connect": "Cannot read the policy. Check connectivity, tailnet and policy_file permissions.",
-      "invalid_tailnet": "Enter an explicit tailnet name."
+      "cannot_connect": "Could not reach the Tailscale API or obtain an OAuth token. Check connectivity and try again.",
+      "invalid_tailnet": "Enter a tailnet ID or -.",
+      "policy_forbidden": "Tailscale ACL API returned HTTP 403. Check the OAuth client’s tailnet and policy_file scope.",
+      "tailnet_not_found": "Tailscale ACL API returned HTTP 404. Check the tailnet ID or use - for this OAuth client’s tailnet.",
+      "api_error": "Tailscale ACL API returned an error. Check the Home Assistant log for the HTTP status.",
+      "invalid_policy": "Tailscale returned a policy that this integration could not parse. Check the Home Assistant log."
     },
     "abort": {
       "already_configured": "This tailnet is already configured.",

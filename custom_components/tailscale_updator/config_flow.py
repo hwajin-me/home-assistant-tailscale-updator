@@ -1,5 +1,7 @@
 """Configure OAuth credentials and app-domain switches from the UI."""
 
+import logging
+
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
@@ -7,9 +9,25 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import ApiError, AuthError, TailscaleClient
+from .api import ApiError, ApiHttpError, AuthError, TailscaleClient
 from .const import CONF_TAILNET, DOMAIN
 from .policy import PolicyError, domain_base, domain_bases
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def policy_read_error(err: ApiError | PolicyError) -> str:
+    """Report the failed stage without exposing response bodies or credentials."""
+    _LOGGER.warning("Tailscale policy read failed: %s", err)
+    if isinstance(err, ApiHttpError):
+        if err.status == 403:
+            return "policy_forbidden"
+        if err.status == 404:
+            return "tailnet_not_found"
+        return "api_error"
+    if isinstance(err, PolicyError):
+        return "invalid_policy"
+    return "cannot_connect"
 
 
 def credentials_schema(reauth=False):
@@ -20,7 +38,7 @@ def credentials_schema(reauth=False):
         ),
     }
     if not reauth:
-        fields = {vol.Required(CONF_TAILNET): str, **fields}
+        fields = {vol.Required(CONF_TAILNET, default="-"): str, **fields}
     return vol.Schema(fields)
 
 
@@ -40,19 +58,23 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             user_input = dict(user_input)
-            user_input[CONF_TAILNET] = user_input[CONF_TAILNET].strip().lower()
-            # Require an explicit tailnet; '-' could alias a separately configured entry.
-            if user_input[CONF_TAILNET] in ("", "-"):
+            user_input[CONF_TAILNET] = user_input.get(CONF_TAILNET, "-").strip().lower()
+            if not user_input[CONF_TAILNET]:
                 errors["base"] = "invalid_tailnet"
             else:
-                await self.async_set_unique_id(user_input[CONF_TAILNET])
+                unique_id = (
+                    f"oauth:{user_input[CONF_CLIENT_ID]}"
+                    if user_input[CONF_TAILNET] == "-"
+                    else user_input[CONF_TAILNET]
+                )
+                await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_configured()
                 try:
                     await self._validate(user_input)
                 except AuthError:
                     errors["base"] = "invalid_auth"
-                except (ApiError, PolicyError):
-                    errors["base"] = "cannot_connect"
+                except (ApiError, PolicyError) as err:
+                    errors["base"] = policy_read_error(err)
                 else:
                     return self.async_create_entry(
                         title=user_input[CONF_TAILNET], data=user_input
@@ -72,8 +94,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self._validate({**entry.data, **user_input})
             except AuthError:
                 errors["base"] = "invalid_auth"
-            except (ApiError, PolicyError):
-                errors["base"] = "cannot_connect"
+            except (ApiError, PolicyError) as err:
+                errors["base"] = policy_read_error(err)
             else:
                 return self.async_update_reload_and_abort(
                     entry, data_updates=user_input

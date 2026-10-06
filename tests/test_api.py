@@ -10,6 +10,7 @@ from aioresponses import aioresponses
 
 from custom_components.tailscale_updator.api import (
     ApiError,
+    ApiHttpError,
     AuthError,
     ConflictError,
     TailscaleClient,
@@ -87,6 +88,16 @@ async def test_repeated_401_requires_reauth(client):
         mock.get(ACL, status=401, repeat=True)
         with pytest.raises(AuthError):
             await client.get_policy()
+
+
+@pytest.mark.parametrize("status", [403, 404, 429, 500])
+async def test_policy_read_preserves_http_status(client, status):
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, status=status)
+        with pytest.raises(ApiHttpError) as raised:
+            await client.get_policy()
+        assert raised.value.status == status
 
 
 @pytest.mark.parametrize(

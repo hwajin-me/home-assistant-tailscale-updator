@@ -4,9 +4,9 @@
     "step": {
       "user": {
         "title": "Tailscale OAuth 클라이언트",
-        "description": "policy_file 쓰기 권한이 있는 OAuth Client ID/Secret과 tailnet 이름을 입력하세요. 기존 ACL 도메인은 자동으로 스위치가 됩니다. 구성에서 도메인 쌍을 추가·제거·수정할 수 있습니다.",
+        "description": "policy_file 쓰기 권한이 있는 OAuth Client ID/Secret을 입력하세요. Tailnet 기본값 -는 이 OAuth 클라이언트의 tailnet을 뜻합니다. 기존 ACL 도메인은 자동으로 스위치가 됩니다.",
         "data": {
-          "tailnet": "Tailnet 이름 (- 사용 불가)",
+          "tailnet": "Tailnet ID (현재 OAuth 클라이언트의 tailnet은 -)",
           "client_id": "OAuth Client ID",
           "client_secret": "OAuth Client Secret"
         }
@@ -21,8 +21,12 @@
     },
     "error": {
       "invalid_auth": "OAuth 인증 정보가 거부되었습니다.",
-      "cannot_connect": "정책을 읽을 수 없습니다. 연결, tailnet, policy_file 권한을 확인하세요.",
-      "invalid_tailnet": "명시적인 tailnet 이름을 입력하세요."
+      "cannot_connect": "Tailscale API에 연결하거나 OAuth 토큰을 발급받지 못했습니다. 연결 상태를 확인하세요.",
+      "invalid_tailnet": "Tailnet ID 또는 -를 입력하세요.",
+      "policy_forbidden": "Tailscale ACL API가 HTTP 403을 반환했습니다. OAuth 클라이언트의 tailnet과 policy_file 권한을 확인하세요.",
+      "tailnet_not_found": "Tailscale ACL API가 HTTP 404를 반환했습니다. Tailnet ID를 확인하거나 -를 사용하세요.",
+      "api_error": "Tailscale ACL API가 오류를 반환했습니다. Home Assistant 로그에서 HTTP 상태 코드를 확인하세요.",
+      "invalid_policy": "Tailscale 정책 응답을 해석하지 못했습니다. Home Assistant 로그를 확인하세요."
     },
     "abort": {
       "already_configured": "이미 설정한 tailnet입니다.",

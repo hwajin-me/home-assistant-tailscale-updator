@@ -16,10 +16,16 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from test_api import policy
 
 from custom_components.tailscale_updator import async_setup_entry, async_unload_entry
-from custom_components.tailscale_updator.api import ApiError, AuthError, Snapshot
+from custom_components.tailscale_updator.api import (
+    ApiError,
+    ApiHttpError,
+    AuthError,
+    Snapshot,
+)
 from custom_components.tailscale_updator.config_flow import ConfigFlow, OptionsFlow
 from custom_components.tailscale_updator.const import DOMAIN
 from custom_components.tailscale_updator.coordinator import PolicyCoordinator
+from custom_components.tailscale_updator.policy import PolicyError
 from custom_components.tailscale_updator.services import async_setup_services
 from custom_components.tailscale_updator.switch import DomainSwitch
 
@@ -113,9 +119,39 @@ async def test_user_flow_and_auth_errors(hass):
     with patch.object(flow, "_validate", AsyncMock(side_effect=AuthError())):
         result = await flow.async_step_user(credentials)
         assert result["errors"]["base"] == "invalid_auth"
-    assert (await flow.async_step_user({**credentials, "tailnet": "-"}))["errors"][
+    with patch.object(flow, "_validate", AsyncMock()):
+        result = await flow.async_step_user({**credentials, "tailnet": "-"})
+        assert result["type"] == "create_entry"
+        flow.async_set_unique_id.assert_awaited_with("oauth:id")
+        result = await flow.async_step_user(
+            {"client_id": "id", "client_secret": "secret"}
+        )
+        assert result["data"]["tailnet"] == "-"
+    assert (await flow.async_step_user({**credentials, "tailnet": " "}))["errors"][
         "base"
     ] == "invalid_tailnet"
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (ApiHttpError(403), "policy_forbidden"),
+        (ApiHttpError(404), "tailnet_not_found"),
+        (ApiHttpError(429), "api_error"),
+        (PolicyError("bad HuJSON"), "invalid_policy"),
+        (ApiError("timeout"), "cannot_connect"),
+    ],
+)
+async def test_user_flow_reports_policy_read_failure(hass, error, expected):
+    flow = ConfigFlow()
+    flow.hass = hass
+    flow.async_set_unique_id = AsyncMock()
+    flow._abort_if_unique_id_configured = MagicMock()
+    with patch.object(flow, "_validate", AsyncMock(side_effect=error)):
+        result = await flow.async_step_user(
+            {"tailnet": "-", "client_id": "id", "client_secret": "secret"}
+        )
+    assert result["errors"]["base"] == expected
 
 
 async def test_reauth_preserves_tailnet(hass, entry):
