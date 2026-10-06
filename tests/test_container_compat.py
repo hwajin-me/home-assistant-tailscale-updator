@@ -134,6 +134,9 @@ async def test_container_end_to_end(tmp_path):
 
             options = await hass.config_entries.options.async_init(entry.entry_id)
             options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "domains"}
+            )
+            options = await hass.config_entries.options.async_configure(
                 options["flow_id"], {"connector": "app", "action": "add"}
             )
             options = await hass.config_entries.options.async_configure(
@@ -150,6 +153,9 @@ async def test_container_end_to_end(tmp_path):
             assert hass.states.get(added.entity_id).state == "on"
 
             options = await hass.config_entries.options.async_init(entry.entry_id)
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "domains"}
+            )
             options = await hass.config_entries.options.async_configure(
                 options["flow_id"], {"connector": "app", "action": "rename"}
             )
@@ -256,6 +262,9 @@ async def test_container_end_to_end(tmp_path):
             # Explicit Delete can select an Off domain missing from the ACL.
             options = await hass.config_entries.options.async_init(entry.entry_id)
             options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "domains"}
+            )
+            options = await hass.config_entries.options.async_configure(
                 options["flow_id"], {"connector": "app", "action": "remove"}
             )
             assert options["step_id"] == "change"
@@ -291,6 +300,183 @@ async def test_container_end_to_end(tmp_path):
             )
             await hass.async_block_till_done()
             assert hass.states.get(external.entity_id).state == "on"
+            # Create a local group through the real options flow, including an Off domain.
+            import json as group_json
+
+            previous_writes = len(writes)
+            options = await hass.config_entries.options.async_init(entry.entry_id)
+            assert options["type"] == "menu"
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "group_add"}
+            )
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"],
+                {
+                    "name": "Streaming",
+                    "members": [
+                        group_json.dumps(["app", "external.com"]),
+                        group_json.dumps(["app", "added.com"]),
+                    ],
+                },
+            )
+            assert options["reason"] == "group_updated"
+            await hass.async_block_till_done()
+            assert len(writes) == previous_writes
+            group_id = next(iter(entry.options["domain_groups"]))
+            group_entity = next(
+                e
+                for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+                if ":group:" in e.unique_id
+            )
+            assert hass.states.get(group_entity.entity_id).state == "off"
+            assert hass.states.get(group_entity.entity_id).attributes["partially_on"]
+            await hass.services.async_call(
+                "switch",
+                "turn_on",
+                {"entity_id": group_entity.entity_id},
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            assert len(writes) == previous_writes + 1
+            assert set(domains) == {
+                "external.com",
+                "*.external.com",
+                "added.com",
+                "*.added.com",
+            }
+            assert hass.states.get(group_entity.entity_id).state == "on"
+            await hass.services.async_call(
+                "switch",
+                "turn_off",
+                {"entity_id": group_entity.entity_id},
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            assert domains == []
+            assert hass.states.get(external.entity_id).state == "off"
+            assert hass.states.get(added.entity_id).state == "off"
+            assert hass.states.get(group_entity.entity_id).state == "off"
+            # Editing local name/membership retains identity and makes no policy write.
+            previous_writes = len(writes)
+            await hass.services.async_call(
+                DOMAIN,
+                "set_domain_group",
+                {
+                    "entry_id": entry.entry_id,
+                    "group_id": group_id,
+                    "name": "Media",
+                    "members": [
+                        {"connector": "app", "domain": "external.com"},
+                        {"connector": "app", "domain": "added.com"},
+                    ],
+                },
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            assert len(writes) == previous_writes
+            assert (
+                registry.async_get(group_entity.entity_id).unique_id
+                == group_entity.unique_id
+            )
+            # Explicit deletion also removes group membership, so group On cannot resurrect it.
+            await hass.services.async_call(
+                DOMAIN,
+                "remove_domains",
+                {
+                    "entry_id": entry.entry_id,
+                    "connector": "app",
+                    "domains": ["external.com"],
+                },
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            assert entry.options["domain_groups"][group_id]["members"] == [
+                {"connector": "app", "domain": "added.com"}
+            ]
+            await hass.services.async_call(
+                "switch",
+                "turn_on",
+                {"entity_id": group_entity.entity_id},
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            assert set(domains) == {"added.com", "*.added.com"}
+            assert registry.async_get(external.entity_id) is None
+            previous_writes = len(writes)
+            await hass.services.async_call(
+                DOMAIN,
+                "delete_domain_group",
+                {
+                    "entry_id": entry.entry_id,
+                    "group_id": group_id,
+                },
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            assert len(writes) == previous_writes
+            assert registry.async_get(group_entity.entity_id) is None
+            assert hass.states.get(added.entity_id).state == "on"
+            # Renaming an active domain migrates group membership instead of resurrecting the old name.
+            await hass.services.async_call(
+                DOMAIN,
+                "set_domain_group",
+                {
+                    "entry_id": entry.entry_id,
+                    "group_id": "rename-check",
+                    "name": "Rename check",
+                    "members": [{"connector": "app", "domain": "added.com"}],
+                },
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            options = await hass.config_entries.options.async_init(entry.entry_id)
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "domains"}
+            )
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"connector": "app", "action": "rename"}
+            )
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"],
+                {"existing_domain": "added.com", "domain": "updated.com"},
+            )
+            assert options["reason"] == "updated"
+            await hass.async_block_till_done()
+            assert entry.options["domain_groups"]["rename-check"]["members"] == [
+                {"connector": "app", "domain": "updated.com"}
+            ]
+            updated_entity = next(
+                e
+                for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+                if "updated.com" in e.unique_id
+            )
+            # Explicit deletion through scoped set_acl also forgets only the newly deleted domain.
+            current = await hass.services.async_call(
+                DOMAIN,
+                "get_acl",
+                {"entry_id": entry.entry_id},
+                blocking=True,
+                return_response=True,
+            )
+            document = json.loads(current["policy"])
+            document["nodeAttrs"][0]["app"]["tailscale.com/app-connectors"][0][
+                "domains"
+            ] = []
+            await hass.services.async_call(
+                DOMAIN,
+                "set_acl",
+                {
+                    "entry_id": entry.entry_id,
+                    "policy": json.dumps(document),
+                    "expected_etag": current["etag"],
+                },
+                blocking=True,
+            )
+            await hass.async_block_till_done()
+            assert registry.async_get(updated_entity.entity_id) is None
+            assert entry.options["domain_groups"]["rename-check"]["members"] == []
+            assert hass.states.get(added.entity_id).state == "off"
+            assert hass.states.get(initial.entity_id).state == "off"
             assert await hass.config_entries.async_unload(entry.entry_id)
     finally:
         await hass.async_stop(force=True)

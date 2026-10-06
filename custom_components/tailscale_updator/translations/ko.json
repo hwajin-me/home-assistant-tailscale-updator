@@ -33,14 +33,6 @@
   },
   "options": {
     "step": {
-      "init": {
-        "title": "앱 커넥터 도메인 관리",
-        "description": "기존 앱 커넥터를 선택하고 도메인 쌍을 추가·제거하거나 이름을 변경하세요.",
-        "data": {
-          "connector": "앱 커넥터 이름",
-          "action": "작업"
-        }
-      },
       "change": {
         "title": "{connector} 도메인 편집",
         "description": "도메인과 *.도메인을 한 쌍으로 저장합니다. 삭제하면 스위치도 제거됩니다. ACL에 이미 없는 Off 도메인도 삭제할 수 있습니다.",
@@ -48,19 +40,59 @@
           "existing_domain": "기존 도메인",
           "domain": "도메인"
         }
+      },
+      "domains": {
+        "title": "앱 커넥터 도메인 관리",
+        "description": "기존 앱 커넥터를 선택하고 도메인 쌍을 추가·제거하거나 이름을 변경하세요.",
+        "data": {
+          "connector": "앱 커넥터 이름",
+          "action": "작업"
+        }
+      },
+      "init": {
+        "title": "Tailscale 관리",
+        "menu_options": {
+          "domains": "도메인 관리",
+          "group_add": "도메인 그룹 추가",
+          "group_edit": "도메인 그룹 수정",
+          "group_delete": "도메인 그룹 삭제"
+        }
+      },
+      "group_edit": {
+        "title": "도메인 그룹 수정",
+        "data": {
+          "group_id": "그룹"
+        }
+      },
+      "group_delete": {
+        "title": "도메인 그룹 삭제",
+        "data": {
+          "group_id": "그룹"
+        }
+      },
+      "group_details": {
+        "title": "도메인 그룹",
+        "description": "그룹은 Home Assistant 내부에만 저장됩니다. 여러 앱 커넥터의 도메인을 선택할 수 있으며 그룹 스위치로 함께 켜고 끕니다.",
+        "data": {
+          "name": "그룹 이름",
+          "members": "도메인 목록"
+        }
       }
     },
     "error": {
       "invalid_auth": "OAuth 인증 정보가 거부되었습니다.",
       "invalid_domains": "도메인 형식과 앱 커넥터의 현재 도메인 목록을 확인하세요.",
-      "cannot_connect": "정책을 저장하거나 새로 불러올 수 없습니다."
+      "cannot_connect": "정책을 저장하거나 새로 불러올 수 없습니다.",
+      "invalid_group": "그룹 이름과 선택한 도메인을 확인하세요. 다른 곳에서 그룹이 수정되거나 삭제되었다면 편집창을 다시 여세요."
     },
     "abort": {
       "cannot_connect": "정책을 읽을 수 없습니다.",
       "no_connectors": "명시적 도메인 목록이 있는 편집 가능한 앱 커넥터를 찾지 못했습니다.",
       "no_domains": "이 앱 커넥터에는 아직 도메인이 없습니다.",
       "updated": "ACL 도메인을 수정했습니다.",
-      "invalid_auth": "OAuth 인증 정보가 거부되었습니다."
+      "invalid_auth": "OAuth 인증 정보가 거부되었습니다.",
+      "no_groups": "설정된 도메인 그룹이 없습니다.",
+      "group_updated": "도메인 그룹을 수정했습니다."
     }
   },
   "selector": {
@@ -84,8 +116,8 @@
       }
     },
     "set_acl": {
-      "name": "ACL 설정",
-      "description": "ACL 가져오기에서 받은 ETag를 사용해 JSONC 정책 전체를 교체합니다. 관리자 권한이 필요합니다.",
+      "name": "앱 커넥터 수정",
+      "description": "현재 ETag로 기존 nodeAttrs의 app-connectors 배열만 수정합니다. grants, SSH, 태그, 그룹, target 등 다른 정책 변경은 거부하고 해당 영역 밖의 원문을 보존합니다.",
       "fields": {
         "entry_id": {
           "name": "통합 구성요소",
@@ -134,6 +166,42 @@
         "domains": {
           "name": "도메인 목록",
           "description": "도메인 이름 목록입니다. 각 도메인과 와일드카드를 함께 관리합니다."
+        }
+      }
+    },
+    "set_domain_group": {
+      "name": "도메인 그룹 저장",
+      "description": "Home Assistant 내부 도메인 그룹을 생성하거나 수정합니다. Tailscale 정책은 변경하지 않습니다. 관리자 권한이 필요합니다.",
+      "fields": {
+        "entry_id": {
+          "name": "통합 구성요소",
+          "description": "설정된 Tailscale Updator 통합 구성요소를 선택하세요."
+        },
+        "group_id": {
+          "name": "그룹",
+          "description": "내부 그룹의 고정 ID입니다. 같은 ID로 호출하면 그룹을 수정합니다."
+        },
+        "name": {
+          "name": "그룹 이름",
+          "description": "그룹 스위치의 표시 이름입니다."
+        },
+        "members": {
+          "name": "도메인 목록",
+          "description": "connector와 domain 쌍의 목록입니다. 현재 등록되었거나 Off로 보관된 도메인을 선택합니다."
+        }
+      }
+    },
+    "delete_domain_group": {
+      "name": "도메인 그룹 삭제",
+      "description": "내부 그룹과 그룹 스위치를 삭제합니다. 개별 도메인 스위치와 Tailscale 정책은 유지됩니다. 관리자 권한이 필요합니다.",
+      "fields": {
+        "entry_id": {
+          "name": "통합 구성요소",
+          "description": "설정된 Tailscale Updator 통합 구성요소를 선택하세요."
+        },
+        "group_id": {
+          "name": "그룹",
+          "description": "내부 그룹의 고정 ID입니다. 같은 ID로 호출하면 그룹을 수정합니다."
         }
       }
     }

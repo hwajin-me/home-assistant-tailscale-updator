@@ -1,5 +1,7 @@
 """Configure OAuth credentials and app-domain switches from the UI."""
 
+import copy
+import json
 import logging
 
 import voluptuous as vol
@@ -10,8 +12,9 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import ApiError, ApiHttpError, AuthError, TailscaleClient
-from .const import DOMAIN
+from .api import ApiError, ApiHttpError, AuthError, PolicyResponseError, TailscaleClient
+from .const import CONF_DOMAIN_GROUPS, DOMAIN
+from .groups import available_pairs, delete_group, save_group
 from .policy import PolicyError, domain_base, domain_bases
 from .registry import remembered_pairs
 
@@ -27,7 +30,7 @@ def policy_read_error(err: ApiError | PolicyError) -> str:
         if err.status == 404:
             return "tailnet_not_found"
         return "api_error"
-    if isinstance(err, PolicyError):
+    if isinstance(err, (PolicyError, PolicyResponseError)):
         return "invalid_policy"
     return "cannot_connect"
 
@@ -134,6 +137,16 @@ class OptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         if not hasattr(self.config_entry, "runtime_data"):
             return self.async_abort(reason="cannot_connect")
+        if user_input is not None:
+            return await self.async_step_domains(user_input)
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["domains", "group_add", "group_edit", "group_delete"],
+        )
+
+    async def async_step_domains(self, user_input=None):
+        if not hasattr(self.config_entry, "runtime_data"):
+            return self.async_abort(reason="cannot_connect")
         try:
             snapshot = await self.config_entry.runtime_data.client.get_policy()
             names = []
@@ -159,7 +172,7 @@ class OptionsFlow(config_entries.OptionsFlow):
             self._action = user_input["action"]
             return await self.async_step_change()
         return self.async_show_form(
-            step_id="init",
+            step_id="domains",
             data_schema=vol.Schema(
                 {
                     vol.Required("connector"): selector.SelectSelector(
@@ -214,6 +227,10 @@ class OptionsFlow(config_entries.OptionsFlow):
                     remove = [domain_base(user_input["existing_domain"])]
                 if self._action == "remove":
                     await coordinator.async_delete_domains(self._connector, remove)
+                elif self._action == "rename":
+                    await coordinator.async_rename_domain(
+                        self._connector, remove[0], add[0]
+                    )
                 else:
 
                     async def change():
@@ -250,4 +267,110 @@ class OptionsFlow(config_entries.OptionsFlow):
             description_placeholders={"connector": self._connector},
             data_schema=vol.Schema(fields),
             errors=errors,
+        )
+
+    async def async_step_group_add(self, user_input=None):
+        self._group_id = None
+        self._group_original = None
+        return await self.async_step_group_details()
+
+    async def async_step_group_edit(self, user_input=None):
+        return await self._select_group("group_edit", user_input)
+
+    async def async_step_group_delete(self, user_input=None):
+        return await self._select_group("group_delete", user_input)
+
+    async def _select_group(self, step, user_input):
+        if not hasattr(self.config_entry, "runtime_data"):
+            return self.async_abort(reason="cannot_connect")
+        groups = self.config_entry.options.get(CONF_DOMAIN_GROUPS, {})
+        if not groups:
+            return self.async_abort(reason="no_groups")
+        if user_input is not None:
+            group_id = user_input["group_id"]
+            if group_id not in groups:
+                return self.async_abort(reason="no_groups")
+            if step == "group_delete":
+                async with self.config_entry.runtime_data.edit_lock:
+                    try:
+                        delete_group(self.hass, self.config_entry, group_id)
+                    except PolicyError:
+                        return self.async_abort(reason="no_groups")
+                return self.async_abort(reason="group_updated")
+            self._group_id = group_id
+            self._group_original = copy.deepcopy(groups[group_id])
+            return await self.async_step_group_details()
+        return self.async_show_form(
+            step_id=step,
+            data_schema=vol.Schema(
+                {
+                    vol.Required("group_id"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": key, "label": value["name"]}
+                                for key, value in groups.items()
+                            ]
+                        )
+                    )
+                }
+            ),
+        )
+
+    async def async_step_group_details(self, user_input=None):
+        if not hasattr(self.config_entry, "runtime_data"):
+            return self.async_abort(reason="cannot_connect")
+        group = self.config_entry.options.get(CONF_DOMAIN_GROUPS, {}).get(
+            self._group_id, {}
+        )
+        errors = {}
+        if user_input is not None:
+            try:
+                members = []
+                for value in user_input["members"]:
+                    connector, domain = json.loads(value)
+                    members.append({"connector": connector, "domain": domain})
+                async with self.config_entry.runtime_data.edit_lock:
+                    save_group(
+                        self.hass,
+                        self.config_entry,
+                        user_input["name"],
+                        members,
+                        self._group_id,
+                        require_existing=self._group_id is not None,
+                        expected=getattr(self, "_group_original", None),
+                    )
+            except (PolicyError, ValueError, TypeError):
+                errors["base"] = "invalid_group"
+            else:
+                return self.async_abort(reason="group_updated")
+        try:
+            pairs = sorted(available_pairs(self.hass, self.config_entry))
+        except PolicyError:
+            return self.async_abort(reason="cannot_connect")
+        return self.async_show_form(
+            step_id="group_details",
+            errors=errors,
+            data_schema=vol.Schema(
+                {
+                    vol.Required("name", default=group.get("name", "")): str,
+                    vol.Required(
+                        "members",
+                        default=[
+                            json.dumps([m["connector"], m["domain"]])
+                            for m in group.get("members", [])
+                        ],
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            multiple=True,
+                            options=[
+                                {
+                                    "value": json.dumps([connector, domain]),
+                                    "label": f"{connector}: {domain}",
+                                }
+                                for connector, domain in pairs
+                            ],
+                        )
+                    ),
+                }
+            ),
         )

@@ -4,7 +4,7 @@ import json
 
 from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_SWITCHES, DOMAIN
+from .const import CONF_DOMAIN_GROUPS, CONF_SWITCHES, DOMAIN
 from .policy import PolicyError, domain_base
 
 
@@ -75,10 +75,24 @@ def forget_domains(hass, entry, connector, domains):
     for item in domain_entries(hass, entry):
         if registered_pair(entry.entry_id, item.unique_id) in removed:
             registry.async_remove(item.entity_id)
-    legacy = entry.options.get(CONF_SWITCHES, [])
-    if isinstance(legacy, list):
-        remaining = [item for item in legacy if legacy_pair(item) not in removed]
-        if remaining != legacy:
-            hass.config_entries.async_update_entry(
-                entry, options={**entry.options, CONF_SWITCHES: remaining}
-            )
+    options = dict(entry.options)
+    legacy = options.get(CONF_SWITCHES, [])
+    if CONF_SWITCHES in options and isinstance(legacy, list):
+        options[CONF_SWITCHES] = [
+            item for item in legacy if legacy_pair(item) not in removed
+        ]
+    groups = options.get(CONF_DOMAIN_GROUPS, {})
+    if groups:
+        options[CONF_DOMAIN_GROUPS] = {
+            key: {
+                **group,
+                "members": [
+                    member
+                    for member in group["members"]
+                    if legacy_pair(member) not in removed
+                ],
+            }
+            for key, group in groups.items()
+        }
+    if options != dict(entry.options):
+        hass.config_entries.async_update_entry(entry, options=options)

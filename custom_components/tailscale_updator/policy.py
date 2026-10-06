@@ -1,5 +1,6 @@
 """Strict JSONC parsing with source spans for narrowly scoped policy edits."""
 
+import copy
 import ipaddress
 import json
 import re
@@ -121,6 +122,47 @@ class Policy:
                 if not isinstance(name, str) or not name or name in result:
                     raise PolicyError("Missing or duplicate connector name")
                 result[name] = connector
+        return result
+
+    def connector_arrays(self) -> list[Node]:
+        """Validate and locate only the app-connectors capability arrays."""
+        self.connectors()
+        attrs = self.root.children.get("nodeAttrs")
+        if attrs is None:
+            return []
+        return [
+            attr.children["app"].children[CAPABILITY]
+            for attr in attrs.children
+            if "app" in attr.children and CAPABILITY in attr.children["app"].children
+        ]
+
+    def outside_connectors(self):
+        """A structural fingerprint retaining targets and all other policy data."""
+        value = copy.deepcopy(self.root.value)
+        for attr in value.get("nodeAttrs", []):
+            if CAPABILITY in attr.get("app", {}):
+                attr["app"][CAPABILITY] = []
+        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+    def merge_connector_changes(self, proposed: str) -> str:
+        """Accept only app-array edits and preserve all other original source bytes."""
+        other = Policy(proposed)
+        arrays = self.connector_arrays()
+        replacements = other.connector_arrays()
+        if self.outside_connectors() != other.outside_connectors() or len(
+            arrays
+        ) != len(replacements):
+            raise PolicyError(
+                "Only existing app-connectors capability arrays may be edited"
+            )
+        result = self.source
+        for old, new in reversed(list(zip(arrays, replacements, strict=True))):
+            if old.value != new.value:
+                result = (
+                    result[: old.start]
+                    + other.source[new.start : new.end]
+                    + result[old.end :]
+                )
         return result
 
     def domains(self, name: str) -> list[str]:

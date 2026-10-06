@@ -207,3 +207,55 @@ def test_update_into_existing_domain_merges_one_pair():
         "Streaming", ["new.com"], ["example.com"]
     )
     assert Policy(result).domains("Streaming") == ["new.com", "*.new.com"]
+
+
+@pytest.mark.parametrize(
+    "section",
+    ["grants", "ssh", "tagOwners", "groups", "autoApprovers", "acls", "hosts"],
+)
+def test_connector_only_edit_rejects_other_policy_changes(section):
+    policy = Policy(POLICY)
+    proposed = policy.root.value.copy()
+    proposed[section] = {"changed": True}
+    with pytest.raises(PolicyError, match="Only existing"):
+        policy.merge_connector_changes(json.dumps(proposed))
+
+
+@pytest.mark.parametrize(
+    "change", ["target", "other_capability", "attr", "remove_attr"]
+)
+def test_connector_only_edit_protects_node_attributes(change):
+    policy = Policy(POLICY)
+    data = Policy(POLICY).root.value
+    if change == "target":
+        data["nodeAttrs"][0]["target"] = ["tag:other"]
+    elif change == "other_capability":
+        data["nodeAttrs"][0]["app"]["example.com/other"] = []
+    elif change == "attr":
+        data["nodeAttrs"][0]["attr"] = ["funnel"]
+    else:
+        data["nodeAttrs"] = []
+    with pytest.raises(PolicyError):
+        policy.merge_connector_changes(json.dumps(data))
+
+
+def test_connector_create_update_delete_preserves_every_other_source_byte():
+    policy = Policy(POLICY)
+    data = Policy(POLICY).root.value
+    apps = data["nodeAttrs"][0]["app"]["tailscale.com/app-connectors"]
+    apps[0]["connectors"] = ["tag:new"]
+    apps.pop(1)
+    apps.append(
+        {
+            "name": "Created",
+            "connectors": ["tag:exit"],
+            "domains": ["new.com", "*.new.com"],
+        }
+    )
+    # Proposed document formatting does not replace unrelated original text.
+    result = policy.merge_connector_changes(json.dumps(data, indent=4))
+    node = policy.connector_arrays()[0]
+    assert result.startswith(POLICY[: node.start])
+    assert result.endswith(POLICY[node.end :])
+    assert set(Policy(result).connectors()) == {"Streaming", "Created"}
+    assert Policy(result).outside_connectors() == policy.outside_connectors()

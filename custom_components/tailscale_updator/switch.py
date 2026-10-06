@@ -6,7 +6,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_DOMAIN_GROUPS, DOMAIN
+from .groups import group_unique_id
 from .policy import PolicyError, domain_base, domain_bases, normalize_domain
 from .registry import domain_entries, registered_pair, remembered_pairs, unique_id
 
@@ -14,6 +15,10 @@ from .registry import domain_entries, registered_pair, remembered_pairs, unique_
 async def async_setup_entry(hass, entry, async_add_entities):
     manager = DomainSwitchManager(hass, entry, async_add_entities)
     manager.reconcile()
+    async_add_entities(
+        DomainGroupSwitch(entry, group_id)
+        for group_id in entry.options.get(CONF_DOMAIN_GROUPS, {})
+    )
     entry.async_on_unload(entry.runtime_data.async_add_listener(manager.reconcile))
 
 
@@ -141,3 +146,65 @@ class DomainSwitch(CoordinatorEntity, SwitchEntity):
         await self.coordinator.async_write(
             self.coordinator.client.set_domains, self.connector, [self.domain], False
         )
+
+
+class DomainGroupSwitch(CoordinatorEntity, SwitchEntity):
+    """A locally named group, written atomically across app connectors."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:tag-multiple"
+
+    def __init__(self, entry, group_id):
+        super().__init__(entry.runtime_data)
+        self.entry = entry
+        self.group_id = group_id
+        self._attr_unique_id = group_unique_id(entry.entry_id, group_id)
+        self._attr_name = self._group["name"]
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            manufacturer="Tailscale",
+        )
+
+    @property
+    def _group(self):
+        return self.entry.options.get(CONF_DOMAIN_GROUPS, {}).get(self.group_id, {})
+
+    def _states(self):
+        policy = self.coordinator.data.policy
+        return [
+            {member["domain"], f"*.{member['domain']}"}
+            <= {
+                normalize_domain(value) for value in policy.domains(member["connector"])
+            }
+            for member in self._group.get("members", [])
+        ]
+
+    @property
+    def available(self):
+        if not super().available:
+            return False
+        try:
+            return bool(self._states())
+        except PolicyError:
+            return False
+
+    @property
+    def is_on(self):
+        return all(self._states()) if self.available else None
+
+    @property
+    def extra_state_attributes(self):
+        if not self.available:
+            return None
+        states = self._states()
+        return {
+            "member_count": len(states),
+            "enabled_count": sum(states),
+            "partially_on": any(states) and not all(states),
+        }
+
+    async def async_turn_on(self, **kwargs):
+        await self.coordinator.async_set_domain_group(self.group_id, True)
+
+    async def async_turn_off(self, **kwargs):
+        await self.coordinator.async_set_domain_group(self.group_id, False)

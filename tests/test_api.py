@@ -146,10 +146,10 @@ async def test_missing_etag_prevents_write(client):
 async def test_whole_policy_conflict_is_not_retried(client):
     with aioresponses() as mock:
         token(mock)
-        mock.post(ACL, status=412)
+        mock.get(ACL, body="{}", headers={"ETag": '"new"'})
         with pytest.raises(ConflictError):
             await client.replace_policy("{}", '"old"')
-        assert len(next(v for k, v in mock.requests.items() if str(k[1]) == ACL)) == 1
+        assert all(k[0] != "POST" or str(k[1]) != ACL for k in mock.requests)
 
 
 async def test_idempotent_update_does_not_post(client):
@@ -239,3 +239,115 @@ async def test_update_aborts_if_original_domain_disappears_during_conflict(clien
             v for k, v in mock.requests.items() if k[0] == "POST" and str(k[1]) == ACL
         )
         assert len(calls) == 1
+
+
+async def test_set_acl_rejects_unrelated_changes_before_post(client):
+    from custom_components.tailscale_updator.policy import PolicyError
+
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body=policy(["a.com"]), headers={"ETag": '"1"'})
+        proposed = json.loads(policy(["a.com"]))
+        proposed["grants"] = [{"src": ["*"], "dst": ["*"], "ip": ["*"]}]
+        with pytest.raises(PolicyError):
+            await client.replace_policy(json.dumps(proposed), '"1"')
+        assert all(k[0] != "POST" or str(k[1]) != ACL for k in mock.requests)
+
+
+async def test_group_writes_multiple_connectors_atomically(client):
+    from custom_components.tailscale_updator.policy import Policy
+
+    source = json.loads(policy([]))
+    source["grants"] = [{"src": ["group:admin"], "dst": ["tag:node"], "ip": ["*"]}]
+    source["nodeAttrs"][0]["app"]["tailscale.com/app-connectors"].append(
+        {"name": "second", "domains": []}
+    )
+    members = [
+        {"connector": "app", "domain": "a.com"},
+        {"connector": "second", "domain": "b.com"},
+    ]
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body=json.dumps(source), headers={"ETag": '"1"'})
+        mock.post(ACL, body="{}")
+        mock.get(ACL, body=json.dumps(source), headers={"ETag": '"2"'})
+        await client.set_domain_group(members, True)
+        calls = next(
+            v for k, v in mock.requests.items() if k[0] == "POST" and str(k[1]) == ACL
+        )
+        assert len(calls) == 1
+        written = Policy(calls[0].kwargs["data"].decode())
+        assert written.domains("app") == ["a.com", "*.a.com"]
+        assert written.domains("second") == ["b.com", "*.b.com"]
+        assert written.root.value["grants"] == source["grants"]
+
+
+async def test_missing_group_connector_prevents_partial_write(client):
+    from custom_components.tailscale_updator.policy import PolicyError
+
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body=policy([]), headers={"ETag": '"1"'})
+        with pytest.raises(PolicyError):
+            await client.set_domain_group(
+                [
+                    {"connector": "app", "domain": "a.com"},
+                    {"connector": "missing", "domain": "b.com"},
+                ],
+                True,
+            )
+        assert all(k[0] != "POST" or str(k[1]) != ACL for k in mock.requests)
+
+
+async def test_group_conflict_retries_all_members_with_fresh_policy(client):
+    from custom_components.tailscale_updator.policy import Policy
+
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body=policy([]), headers={"ETag": '"1"'})
+        mock.post(ACL, status=412)
+        updated = json.loads(policy(["external.com"]))
+        updated["groups"] = {"group:external": ["user@example.com"]}
+        mock.get(ACL, body=json.dumps(updated), headers={"ETag": '"2"'})
+        mock.post(ACL, body="{}")
+        mock.get(ACL, body=json.dumps(updated), headers={"ETag": '"3"'})
+        await client.set_domain_group(
+            [
+                {"connector": "app", "domain": "a.com"},
+                {"connector": "app", "domain": "b.com"},
+            ],
+            True,
+        )
+        calls = next(
+            v for k, v in mock.requests.items() if k[0] == "POST" and str(k[1]) == ACL
+        )
+        assert len(calls) == 2
+        assert calls[1].kwargs["headers"]["If-Match"] == '"2"'
+        written = Policy(calls[1].kwargs["data"].decode())
+        assert written.root.value["groups"] == updated["groups"]
+        assert set(written.domains("app")) == {
+            "external.com",
+            "a.com",
+            "*.a.com",
+            "b.com",
+            "*.b.com",
+        }
+
+
+@pytest.mark.parametrize("expires_in", ["NaN", "Infinity", float("inf")])
+async def test_invalid_token_expiration_is_rejected(client, expires_in):
+    with aioresponses() as mock:
+        mock.post(TOKEN, payload={"access_token": "token", "expires_in": expires_in})
+        mock.get(ACL, body="{}")
+        with pytest.raises(ApiError, match="OAuth token"):
+            await client.get_policy()
+
+
+async def test_malformed_remote_policy_is_a_remote_failure(client):
+    from custom_components.tailscale_updator.api import PolicyResponseError
+
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body="<html>Bad upstream response</html>")
+        with pytest.raises(PolicyResponseError):
+            await client.get_policy()

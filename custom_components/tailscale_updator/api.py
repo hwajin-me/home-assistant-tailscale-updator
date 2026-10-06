@@ -1,6 +1,7 @@
 """OAuth client credentials and conditional Tailscale policy writes."""
 
 import asyncio
+import math
 import time
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -13,6 +14,10 @@ from .policy import Policy, PolicyError, domain_base, domain_bases
 
 class ApiError(Exception):
     """Tailscale request failed (never includes credentials or policy bodies)."""
+
+
+class PolicyResponseError(ApiError):
+    """The remote endpoint returned an unreadable policy."""
 
 
 class AuthError(ApiError):
@@ -78,12 +83,24 @@ class TailscaleClient:
                     data = await response.json()
                     token = data["access_token"]
                     lifetime = float(data["expires_in"])
-                    if not isinstance(token, str) or not token or lifetime <= 0:
+                    if (
+                        not isinstance(token, str)
+                        or not token
+                        or not math.isfinite(lifetime)
+                        or lifetime <= 0
+                    ):
                         raise ValueError
                     self._token = token
                     self._expires = time.monotonic() + max(0, lifetime - 60)
                     return token
-            except (ClientError, TimeoutError, ValueError, KeyError, TypeError) as err:
+            except (
+                ClientError,
+                TimeoutError,
+                ValueError,
+                KeyError,
+                TypeError,
+                OverflowError,
+            ) as err:
                 raise ApiError("Could not obtain OAuth token") from err
 
     async def _request(self, method: str, *, body=None, etag=None):
@@ -120,12 +137,18 @@ class TailscaleClient:
 
     async def get_policy(self) -> Snapshot:
         text, etag = await self._request("GET")
-        Policy(text)
+        try:
+            Policy(text)
+        except PolicyError as err:
+            raise PolicyResponseError(
+                "Tailscale returned an invalid JSONC policy"
+            ) from err
         return Snapshot(text, etag)
 
-    async def _write(self, text: str, etag: str):
+    async def _write(self, text: str, etag: str, original: str):
         if not etag or etag.strip() == "*":
             raise ApiError("A specific policy ETag is required for safe updates")
+        text = Policy(original).merge_connector_changes(text)
         await self._request("POST", body=text.encode("utf-8"), etag=etag)
 
     async def set_domains(
@@ -155,7 +178,35 @@ class TailscaleClient:
                 if updated == snapshot.text:
                     return snapshot
                 try:
-                    await self._write(updated, snapshot.etag)
+                    await self._write(updated, snapshot.etag, snapshot.text)
+                except ConflictError:
+                    if attempt < 2:
+                        continue
+                    raise
+                return await self.get_policy()
+        raise ConflictError("Policy remained busy")
+
+    async def set_domain_group(self, members: list[dict], enabled: bool) -> Snapshot:
+        """Apply every member in a single conditional policy write, or none."""
+        by_connector: dict[str, set[str]] = {}
+        for member in members:
+            by_connector.setdefault(member["connector"], set()).add(
+                domain_base(member["domain"])
+            )
+        if not by_connector:
+            raise PolicyError("The domain group is empty")
+        async with self.write_lock:
+            for attempt in range(3):
+                snapshot = await self.get_policy()
+                updated = snapshot.text
+                for connector, domains in sorted(by_connector.items()):
+                    updated = Policy(updated).set_domains(
+                        connector, sorted(domains), enabled
+                    )
+                if updated == snapshot.text:
+                    return snapshot
+                try:
+                    await self._write(updated, snapshot.etag, snapshot.text)
                 except ConflictError:
                     if attempt < 2:
                         continue
@@ -164,8 +215,16 @@ class TailscaleClient:
         raise ConflictError("Policy remained busy")
 
     async def replace_policy(self, text: str, expected_etag: str) -> Snapshot:
+        """Compatibility endpoint: replace app arrays only, never the full policy."""
         Policy(text)
+        if not expected_etag or expected_etag.strip() == "*":
+            raise ApiError("A specific policy ETag is required for safe updates")
         async with self.write_lock:
-            # Never rebase a whole-document replacement over somebody else's edits.
-            await self._write(text, expected_etag)
+            snapshot = await self.get_policy()
+            if snapshot.etag != expected_etag:
+                raise ConflictError("Policy changed; reload it before retrying")
+            updated = snapshot.policy.merge_connector_changes(text)
+            if updated == snapshot.text:
+                return snapshot
+            await self._write(updated, expected_etag, snapshot.text)
             return await self.get_policy()

@@ -89,7 +89,7 @@ data:
 
 삭제는 `tailscale_updator.remove_domains`를 같은 인자로 호출하며 스위치까지 제거합니다. 기본 도메인과 wildcard가 항상 한 쌍으로 처리됩니다. 액션으로 추가한 도메인도 다음 정책 동기화 때 자동으로 switch에 등록됩니다. 빈 배열이 되어도 앱 자체는 삭제하지 않습니다.
 
-### 전체 ACL JSONC 읽기/수정
+### ACL 읽기 / 앱 커넥터만 수정
 
 ```yaml
 action: tailscale_updator.get_acl
@@ -98,7 +98,7 @@ data:
 response_variable: current_acl
 ```
 
-응답은 `policy`(JSONC 문자열)와 `etag`입니다. 원문을 별도로 보관하고 필요한 부분을 편집한 후 다음 액션으로 저장합니다. 응답을 받는 스크립트/자동화의 trace에는 정책이 포함될 수 있습니다.
+응답은 `policy`(JSONC 문자열)와 `etag`입니다. 기존 `nodeAttrs[].app["tailscale.com/app-connectors"]` 배열 안에서만 앱 커넥터를 생성·수정·삭제한 뒤 다음 액션으로 저장합니다. 응답을 받는 스크립트/자동화의 trace에는 정책이 포함될 수 있습니다.
 
 ```yaml
 action: tailscale_updator.set_acl
@@ -108,7 +108,36 @@ data:
   policy: '{{ edited_policy }}'
 ```
 
-`edited_policy`는 호출자가 준비한 **전체** 정책 문자열입니다. 이 예시는 두 변수를 준비한 스크립트 문맥에서 사용하세요. 전체 정책 교체가 충돌하면 자동 덮어쓰기 없이 실패합니다. 최신 정책을 다시 읽고 변경을 합쳐서 재시도해야 합니다. `expected_etag: '*'`는 허용하지 않습니다.
+`edited_policy`는 비교를 위한 **전체** 정책 문자열이지만, 실제 반영은 기존 app-connectors 배열 안으로 제한됩니다. `grants`, `acls`, `ssh`, `tagOwners`, `groups`, `autoApprovers`, `nodeAttrs.target`, 다른 앱 capability 등의 변경은 저장 전에 거부합니다. 허용된 배열 이외의 주석·공백·필드 순서까지 서버 원문을 그대로 보존합니다. 기존 capability 배열 자체를 제거하거나 다른 위치로 옮길 수 없으며, 첫 배열이 없는 정책은 Tailscale에서 초기 설정해야 합니다. 이 예시는 두 변수를 준비한 스크립트 문맥에서 사용하세요. 충돌하면 자동 덮어쓰기 없이 실패합니다. 최신 정책을 다시 읽고 변경을 합쳐서 재시도해야 합니다. `expected_etag: '*'`는 허용하지 않습니다. 이 액션으로 직접 제거한 도메인·앱의 엔티티와 그룹 참조는 정리하며, 편집 전부터 ACL에 없던 Off 도메인은 유지합니다.
+
+## HA 내부 도메인 그룹
+
+통합의 **구성 → 도메인 그룹 추가**에서 이름과 도메인을 선택합니다. 여러 앱 커넥터의 도메인을 한 그룹에 담을 수 있으며, 기본 도메인·와일드카드는 한 구성원으로 취급합니다. 그룹은 HA 설정에만 저장되고 Tailscale의 `groups`·`tagOwners`에는 기록되지 않습니다. **도메인 그룹 수정/삭제**로 관리하며 그룹 이름을 바꿔도 엔티티 ID는 유지됩니다.
+
+- 그룹 스위치 **On**: 모든 구성원의 도메인 쌍을 추가합니다.
+- 그룹 스위치 **Off**: 모든 구성원의 도메인 쌍을 제거하고 개별 스위치는 Off로 보관합니다.
+- 모든 구성원이 완전한 쌍으로 등록되었을 때만 그룹이 On입니다. 일부만 켜졌다면 Off와 `partially_on: true`로 표시합니다.
+- 한 그룹의 여러 앱 수정은 **한 번의 ETag 조건부 저장**으로 처리합니다. 앱이 없어지거나 수정할 수 없으면 전체 작업이 실패하며 일부만 저장하지 않습니다.
+- 도메인 이름을 구성 화면에서 수정하면 그룹 구성원도 새 도메인으로 갱신합니다. 동시에 다른 곳에서 수정·삭제된 그룹을 이전 편집창에서 덮어쓸 수 없습니다.
+- 개별 도메인을 직접 삭제하면 그룹 구성원에서도 제거합니다. 빈 그룹은 편집할 수 있도록 남으며 스위치는 unavailable입니다.
+- 그룹만 삭제하면 그룹 스위치만 제거하고 개별 도메인과 ACL은 유지합니다. 여러 그룹은 HA의 일반 `switch.turn_on`/`switch.turn_off`에서 함께 선택할 수 있습니다. 여러 그룹 간에는 별도 저장이 발생합니다.
+
+자동화에서도 내부 그룹을 저장할 수 있습니다. 같은 `group_id`로 호출하면 수정하며, 그룹 생성·수정·삭제 자체는 ACL을 쓰지 않습니다.
+
+```yaml
+action: tailscale_updator.set_domain_group
+data:
+  entry_id: YOUR_CONFIG_ENTRY_ID
+  group_id: streaming
+  name: 스트리밍
+  members:
+    - connector: stream-japan
+      domain: abema.tv
+    - connector: japan
+      domain: ytimg.com
+```
+
+그룹 삭제는 `tailscale_updator.delete_domain_group`에 `entry_id`와 `group_id`를 전달합니다. 그룹 구성원은 현재 ACL에 있거나 Off로 보관된 도메인에서 선택합니다.
 
 ## 개발 및 검증
 

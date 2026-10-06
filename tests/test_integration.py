@@ -21,6 +21,7 @@ from custom_components.tailscale_updator.api import (
     ApiError,
     ApiHttpError,
     AuthError,
+    PolicyResponseError,
     Snapshot,
 )
 from custom_components.tailscale_updator.config_flow import ConfigFlow, OptionsFlow
@@ -156,6 +157,7 @@ async def test_validation_always_uses_oauth_tailnet(hass):
         (ApiHttpError(404), "tailnet_not_found"),
         (ApiHttpError(429), "api_error"),
         (PolicyError("bad HuJSON"), "invalid_policy"),
+        (PolicyResponseError("bad response"), "invalid_policy"),
         (ApiError("timeout"), "cannot_connect"),
     ],
 )
@@ -297,7 +299,7 @@ async def test_reauth_rejects_client_already_used_by_another_entry(hass, entry):
     validate.assert_not_awaited()
 
 
-@pytest.mark.parametrize("step", ["init", "change"])
+@pytest.mark.parametrize("step", ["domains", "change"])
 async def test_options_policy_read_auth_failure_starts_reauth(hass, entry, step):
     coordinator = make_coordinator(hass, entry)
     coordinator.client.get_policy.side_effect = AuthError("revoked")
@@ -319,3 +321,168 @@ def test_invalid_registered_pair_is_ignored(value):
     from custom_components.tailscale_updator.switch import registered_pair
 
     assert registered_pair("entry", f"entry:{json.dumps(value)}") is None
+
+
+async def test_group_toggle_reads_membership_after_waiting_for_edit(hass, entry):
+    coordinator = make_coordinator(hass, entry)
+    coordinator.client.set_domain_group = AsyncMock()
+    entry.options = {
+        "domain_groups": {
+            "group": {
+                "name": "Media",
+                "members": [
+                    {"connector": "app", "domain": "a.com"},
+                    {"connector": "app", "domain": "b.com"},
+                ],
+            }
+        }
+    }
+    await coordinator.edit_lock.acquire()
+    task = asyncio.create_task(coordinator.async_set_domain_group("group", True))
+    await asyncio.sleep(0)
+    entry.options = {
+        "domain_groups": {
+            "group": {
+                "name": "Media",
+                "members": [{"connector": "app", "domain": "b.com"}],
+            }
+        }
+    }
+    coordinator.edit_lock.release()
+    await task
+    coordinator.client.set_domain_group.assert_awaited_once_with(
+        [{"connector": "app", "domain": "b.com"}], True
+    )
+
+
+async def test_invalid_local_edit_does_not_mark_healthy_entities_unavailable(
+    hass, entry
+):
+    coordinator = make_coordinator(hass, entry)
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_write(
+            AsyncMock(side_effect=PolicyError("invalid input"))
+        )
+    assert coordinator.last_update_success
+
+
+async def test_editing_deleted_group_does_not_recreate_it(hass, entry):
+    make_coordinator(hass, entry)
+    flow = OptionsFlow()
+    flow.hass = hass
+    flow._config_entry = entry
+    flow._group_id = "deleted-group"
+    result = await flow.async_step_group_details(
+        {"name": "Old editor", "members": ['["app", "a.com"]']}
+    )
+    assert result["type"] == "form"
+    assert result["errors"]["base"] == "invalid_group"
+    hass.config_entries.async_update_entry.assert_not_called()
+
+
+async def test_domain_rename_updates_group_membership(hass, entry):
+    make_coordinator(hass, entry)
+    entry.options = {
+        "domain_groups": {
+            "media": {
+                "name": "Media",
+                "members": [{"connector": "app", "domain": "a.com"}],
+            }
+        }
+    }
+    flow = OptionsFlow()
+    flow.hass = hass
+    flow._config_entry = entry
+    await flow.async_step_domains({"connector": "app", "action": "rename"})
+    result = await flow.async_step_change(
+        {"existing_domain": "a.com", "domain": "b.com"}
+    )
+    assert result["reason"] == "updated"
+    options = hass.config_entries.async_update_entry.call_args.kwargs["options"]
+    assert options["domain_groups"]["media"]["members"] == [
+        {"connector": "app", "domain": "b.com"}
+    ]
+
+
+async def test_stale_group_editor_cannot_overwrite_new_membership(hass, entry):
+    make_coordinator(hass, entry)
+    entry.options = {
+        "domain_groups": {
+            "media": {
+                "name": "Media",
+                "members": [{"connector": "app", "domain": "a.com"}],
+            }
+        }
+    }
+    flow = OptionsFlow()
+    flow.hass = hass
+    flow._config_entry = entry
+    await flow.async_step_group_edit({"group_id": "media"})
+    entry.options = {
+        "domain_groups": {
+            "media": {
+                "name": "Changed elsewhere",
+                "members": [{"connector": "app", "domain": "a.com"}],
+            }
+        }
+    }
+    result = await flow.async_step_group_details(
+        {"name": "Old editor", "members": ['["app", "a.com"]']}
+    )
+    assert result["errors"]["base"] == "invalid_group"
+    hass.config_entries.async_update_entry.assert_not_called()
+
+
+async def test_scoped_policy_deletion_forgets_entities_and_group_members(hass, entry):
+    from custom_components.tailscale_updator.registry import unique_id
+
+    coordinator = make_coordinator(hass, entry)
+    entry.options = {
+        "domain_groups": {
+            "media": {
+                "name": "Media",
+                "members": [{"connector": "app", "domain": "a.com"}],
+            }
+        }
+    }
+    registry = er.async_get(hass)
+    entity = registry.async_get_or_create(
+        "switch", DOMAIN, unique_id(entry.entry_id, "app", "a.com"), config_entry=entry
+    )
+    coordinator.client.get_policy.side_effect = [
+        Snapshot(policy(["a.com", "*.a.com"]), '"1"'),
+        Snapshot(policy([]), '"2"'),
+    ]
+    await coordinator.async_replace_connectors(policy([]), '"1"')
+    assert registry.async_get(entity.entity_id) is None
+    options = hass.config_entries.async_update_entry.call_args.kwargs["options"]
+    assert options["domain_groups"]["media"]["members"] == []
+
+
+async def test_group_delete_when_integration_unloaded_is_handled(hass, entry):
+    del entry.runtime_data
+    flow = OptionsFlow()
+    flow.hass = hass
+    flow._config_entry = entry
+    result = await flow.async_step_group_delete({"group_id": "media"})
+    assert result["reason"] == "cannot_connect"
+
+
+async def test_scoped_policy_edit_preserves_previously_absent_domains(hass, entry):
+    from custom_components.tailscale_updator.registry import unique_id
+
+    coordinator = make_coordinator(hass, entry)
+    registry = er.async_get(hass)
+    saved = [
+        registry.async_get_or_create(
+            "switch",
+            DOMAIN,
+            unique_id(entry.entry_id, connector, "off.com"),
+            config_entry=entry,
+        )
+        for connector in ("app", "previously-removed-app")
+    ]
+    coordinator.client.get_policy.return_value = Snapshot(policy([]), '"1"')
+    await coordinator.async_replace_connectors(policy([]), '"1"')
+    assert all(registry.async_get(entity.entity_id) is not None for entity in saved)
+    hass.config_entries.async_update_entry.assert_not_called()

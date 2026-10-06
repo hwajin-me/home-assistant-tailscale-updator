@@ -8,8 +8,10 @@ get_acl:
         config_entry:
           integration: tailscale_updator
 set_acl:
-  name: Set ACL
-  description: Replace the complete JSONC policy using the ETag returned by get_acl. Administrator access required.
+  name: Edit app connectors
+  description: Edit only existing nodeAttrs app-connectors arrays using the current
+    ETag. Changes to grants, SSH, tags, groups, targets or other policy fields are
+    rejected. Other source text is preserved.
   fields:
     entry_id:
       required: true
@@ -24,10 +26,11 @@ set_acl:
     expected_etag:
       required: true
       selector:
-        text:
+        text: null
 add_domains:
   name: Add domains
-  description: Add each parent domain and its wildcard as a pair to an existing explicit-domain app. Administrator access required.
+  description: Add each parent domain and its wildcard as a pair to an existing explicit-domain
+    app. Administrator access required.
   fields:
     entry_id:
       required: true
@@ -38,15 +41,16 @@ add_domains:
       required: true
       example: Streaming
       selector:
-        text:
+        text: null
     domains:
       required: true
       example: '["example.com", "*.example.com"]'
       selector:
-        object:
+        object: null
 remove_domains:
   name: Remove domains
-  description: Delete domain pairs from the ACL and remove their Home Assistant switches. Use switch.turn_off to retain Off switches. Administrator access required.
+  description: Delete domain pairs from the ACL and remove their Home Assistant switches.
+    Use switch.turn_off to retain Off switches. Administrator access required.
   fields:
     entry_id:
       required: true
@@ -56,8 +60,44 @@ remove_domains:
     connector:
       required: true
       selector:
-        text:
+        text: null
     domains:
       required: true
       selector:
-        object:
+        object: null
+set_domain_group:
+  name: Save domain group
+  description: Create or update a Home Assistant-only domain group. Does not write
+    to Tailscale. Administrator access is required.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tailscale_updator
+    group_id:
+      required: true
+      selector:
+        text: {}
+    name:
+      required: true
+      selector:
+        text: {}
+    members:
+      required: true
+      selector:
+        object: {}
+delete_domain_group:
+  name: Delete domain group
+  description: Remove the local group and its switch. Domain switches and the Tailscale
+    policy are retained. Administrator access is required.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tailscale_updator
+    group_id:
+      required: true
+      selector:
+        text: {}

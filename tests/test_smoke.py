@@ -89,6 +89,9 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
             # Add, rename and remove domain pairs in the HA Configure flow.
             options = await hass.config_entries.options.async_init(entry.entry_id)
             options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "domains"}
+            )
+            options = await hass.config_entries.options.async_configure(
                 options["flow_id"], {"connector": "app", "action": "add"}
             )
             options = await hass.config_entries.options.async_configure(
@@ -106,6 +109,9 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
 
             options = await hass.config_entries.options.async_init(entry.entry_id)
             options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "domains"}
+            )
+            options = await hass.config_entries.options.async_configure(
                 options["flow_id"], {"connector": "app", "action": "rename"}
             )
             options = await hass.config_entries.options.async_configure(
@@ -122,6 +128,9 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
             assert hass.states.get(c_entity.entity_id).state == "on"
 
             options = await hass.config_entries.options.async_init(entry.entry_id)
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "domains"}
+            )
             options = await hass.config_entries.options.async_configure(
                 options["flow_id"], {"connector": "app", "action": "remove"}
             )

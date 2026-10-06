@@ -33,14 +33,6 @@
   },
   "options": {
     "step": {
-      "init": {
-        "title": "Manage app connector domains",
-        "description": "Choose an existing app connector and add, remove, or rename a domain pair.",
-        "data": {
-          "connector": "App connector name",
-          "action": "Action"
-        }
-      },
       "change": {
         "title": "Edit domains for {connector}",
         "description": "The domain and *.domain are saved as a pair. Delete removes the switch too, including domains already absent from the ACL.",
@@ -48,19 +40,59 @@
           "existing_domain": "Existing domain",
           "domain": "Domain"
         }
+      },
+      "domains": {
+        "title": "Manage app connector domains",
+        "description": "Choose an existing app connector and add, remove, or rename a domain pair.",
+        "data": {
+          "connector": "App connector name",
+          "action": "Action"
+        }
+      },
+      "init": {
+        "title": "Manage Tailscale",
+        "menu_options": {
+          "domains": "Manage domains",
+          "group_add": "Add domain group",
+          "group_edit": "Edit domain group",
+          "group_delete": "Delete domain group"
+        }
+      },
+      "group_edit": {
+        "title": "Edit domain group",
+        "data": {
+          "group_id": "Group"
+        }
+      },
+      "group_delete": {
+        "title": "Delete domain group",
+        "data": {
+          "group_id": "Group"
+        }
+      },
+      "group_details": {
+        "title": "Domain group",
+        "description": "Groups are stored only in Home Assistant. Select domains from one or more app connectors. The group switch changes all members together.",
+        "data": {
+          "name": "Group name",
+          "members": "Domains"
+        }
       }
     },
     "error": {
       "invalid_auth": "OAuth credentials were rejected.",
       "invalid_domains": "Check the domain format and the app connector’s current domain list.",
-      "cannot_connect": "Could not save or refresh the policy."
+      "cannot_connect": "Could not save or refresh the policy.",
+      "invalid_group": "Check the group name and selected domains. If the group changed or was deleted elsewhere, reopen the editor."
     },
     "abort": {
       "cannot_connect": "Could not read the policy.",
       "no_connectors": "No editable app connectors with an explicit domain list were found.",
       "no_domains": "This app connector has no domains yet.",
       "updated": "ACL domains updated.",
-      "invalid_auth": "OAuth credentials were rejected."
+      "invalid_auth": "OAuth credentials were rejected.",
+      "no_groups": "No domain groups are configured.",
+      "group_updated": "Domain group updated."
     }
   },
   "selector": {
@@ -84,8 +116,8 @@
       }
     },
     "set_acl": {
-      "name": "Set ACL",
-      "description": "Replace the complete JSONC policy using the ETag returned by Get ACL. Administrator access is required.",
+      "name": "Edit app connectors",
+      "description": "Edit only existing nodeAttrs app-connectors arrays using the current ETag. Changes to grants, SSH, tags, groups, targets or other policy fields are rejected. Other source text is preserved.",
       "fields": {
         "entry_id": {
           "name": "Integration",
@@ -134,6 +166,42 @@
         "domains": {
           "name": "Domains",
           "description": "List of domain names. Each domain and its wildcard are managed together."
+        }
+      }
+    },
+    "set_domain_group": {
+      "name": "Save domain group",
+      "description": "Create or update a Home Assistant-only domain group. Does not write to Tailscale. Administrator access is required.",
+      "fields": {
+        "entry_id": {
+          "name": "Integration",
+          "description": "Select the configured Tailscale Updator integration."
+        },
+        "group_id": {
+          "name": "Group",
+          "description": "Stable local group ID. Reuse it to update the group."
+        },
+        "name": {
+          "name": "Group name",
+          "description": "Display name for the group switch."
+        },
+        "members": {
+          "name": "Domains",
+          "description": "List of connector and domain pairs. Domains must already be present or remembered in this integration."
+        }
+      }
+    },
+    "delete_domain_group": {
+      "name": "Delete domain group",
+      "description": "Remove the local group and its switch. Domain switches and the Tailscale policy are retained. Administrator access is required.",
+      "fields": {
+        "entry_id": {
+          "name": "Integration",
+          "description": "Select the configured Tailscale Updator integration."
+        },
+        "group_id": {
+          "name": "Group",
+          "description": "Stable local group ID. Reuse it to update the group."
         }
       }
     }
