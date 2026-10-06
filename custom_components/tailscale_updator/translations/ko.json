@@ -1,0 +1,63 @@
+{
+  "title": "Tailscale Updator",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tailscale OAuth 클라이언트",
+        "description": "policy_file 쓰기 권한이 있는 OAuth Client ID/Secret과 tailnet 이름을 입력하세요. 기존 ACL 도메인은 자동으로 스위치가 됩니다. 구성에서 도메인 쌍을 추가·제거·수정할 수 있습니다.",
+        "data": {
+          "tailnet": "Tailnet 이름 (- 사용 불가)",
+          "client_id": "OAuth Client ID",
+          "client_secret": "OAuth Client Secret"
+        }
+      },
+      "reauth_confirm": {
+        "title": "OAuth 인증 정보 갱신",
+        "data": {
+          "client_id": "OAuth Client ID",
+          "client_secret": "OAuth Client Secret"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "OAuth 인증 정보가 거부되었습니다.",
+      "cannot_connect": "정책을 읽을 수 없습니다. 연결, tailnet, policy_file 권한을 확인하세요.",
+      "invalid_tailnet": "명시적인 tailnet 이름을 입력하세요."
+    },
+    "abort": {
+      "already_configured": "이미 설정한 tailnet입니다.",
+      "reauth_successful": "OAuth 인증 정보를 갱신했습니다."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "앱 도메인 관리",
+        "description": "Tailscale 정책의 기존 앱을 선택하고 도메인 추가·제거·수정을 선택하세요.",
+        "data": {
+          "connector": "App connector 이름",
+          "action": "작업"
+        }
+      },
+      "change": {
+        "title": "{connector} 도메인 편집",
+        "description": "입력한 도메인과 *.도메인을 한 쌍으로 ACL에 저장합니다. 현재 목록에서 하나를 선택해 제거하거나 이름을 바꿀 수 있습니다.",
+        "data": {
+          "existing_domain": "기존 도메인",
+          "domain": "도메인"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "OAuth 인증 정보가 만료되었거나 거부되었습니다.",
+      "invalid_domains": "도메인 형식 또는 앱의 현재 도메인 목록을 확인하세요.",
+      "cannot_connect": "정책을 저장하거나 다시 읽을 수 없습니다."
+    },
+    "abort": {
+      "cannot_connect": "정책을 읽을 수 없습니다.",
+      "no_connectors": "수정 가능한 명시적 도메인 앱이 없습니다.",
+      "no_domains": "이 앱에는 현재 도메인이 없습니다.",
+      "updated": "ACL 도메인을 수정했습니다."
+    }
+  }
+}

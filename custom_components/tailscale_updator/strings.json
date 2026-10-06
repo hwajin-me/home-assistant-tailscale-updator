@@ -1,0 +1,63 @@
+{
+  "title": "Tailscale Updator",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tailscale OAuth client",
+        "description": "Enter a tailnet name and OAuth client credentials with policy_file write scope. Existing ACL domains become switches automatically. Select Configure to add, remove, or rename domain pairs.",
+        "data": {
+          "tailnet": "Tailnet name (not '-')",
+          "client_id": "OAuth Client ID",
+          "client_secret": "OAuth Client Secret"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update OAuth credentials",
+        "data": {
+          "client_id": "OAuth Client ID",
+          "client_secret": "OAuth Client Secret"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "OAuth credentials were rejected.",
+      "cannot_connect": "Cannot read the policy. Check connectivity, tailnet and policy_file permissions.",
+      "invalid_tailnet": "Enter an explicit tailnet name."
+    },
+    "abort": {
+      "already_configured": "This tailnet is already configured.",
+      "reauth_successful": "OAuth credentials updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manage app domains",
+        "description": "Choose an existing app and add, remove, or rename a domain pair.",
+        "data": {
+          "connector": "App connector name",
+          "action": "Action"
+        }
+      },
+      "change": {
+        "title": "Edit {connector} domains",
+        "description": "The parent domain and its wildcard are saved as a pair. Select an existing domain to remove or rename it.",
+        "data": {
+          "existing_domain": "Existing domain",
+          "domain": "Domain"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "OAuth credentials were rejected.",
+      "invalid_domains": "Check the domain and current app list.",
+      "cannot_connect": "Could not save or refresh the policy."
+    },
+    "abort": {
+      "cannot_connect": "Could not read the policy.",
+      "no_connectors": "No editable explicit-domain apps found.",
+      "no_domains": "This app has no domains yet.",
+      "updated": "ACL domains updated."
+    }
+  }
+}

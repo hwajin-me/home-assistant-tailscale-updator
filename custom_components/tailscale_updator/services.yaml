@@ -1,0 +1,63 @@
+get_acl:
+  name: Get ACL
+  description: Read the current JSONC policy and ETag. Administrator access required.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tailscale_updator
+set_acl:
+  name: Set ACL
+  description: Replace the complete JSONC policy using the ETag returned by get_acl. Administrator access required.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tailscale_updator
+    policy:
+      required: true
+      selector:
+        text:
+          multiline: true
+    expected_etag:
+      required: true
+      selector:
+        text:
+add_domains:
+  name: Add domains
+  description: Add each parent domain and its wildcard as a pair to an existing explicit-domain app. Administrator access required.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tailscale_updator
+    connector:
+      required: true
+      example: Streaming
+      selector:
+        text:
+    domains:
+      required: true
+      example: '["example.com", "*.example.com"]'
+      selector:
+        object:
+remove_domains:
+  name: Remove domains
+  description: Remove each parent domain and its wildcard as a pair from an existing app. This is not a traffic-blocking rule. Administrator access required.
+  fields:
+    entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tailscale_updator
+    connector:
+      required: true
+      selector:
+        text:
+    domains:
+      required: true
+      selector:
+        object:

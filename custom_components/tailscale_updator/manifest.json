@@ -1,0 +1,14 @@
+{
+  "domain": "tailscale_updator",
+  "name": "Tailscale Updator",
+  "codeowners": [
+    "@hwajin-me"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/hwajin-me/home-assistant-tailscale-updator",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/hwajin-me/home-assistant-tailscale-updator/issues",
+  "requirements": [],
+  "version": "0.0.1"
+}

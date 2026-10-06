@@ -1,0 +1,8 @@
+.git
+.venv
+.serena
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.pyc
+.DS_Store
