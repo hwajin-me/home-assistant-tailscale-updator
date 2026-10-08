@@ -5,6 +5,7 @@ import uuid
 from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_DOMAIN_GROUPS, DOMAIN
+from .devices import remove_group_device
 from .policy import PolicyError, domain_base, domain_bases
 from .registry import remembered_pairs
 
@@ -80,6 +81,7 @@ def delete_group(hass, entry, group_id):
     )
     if entity_id:
         registry.async_remove(entity_id)
+    remove_group_device(hass, entry, group_id)
     hass.config_entries.async_update_entry(
         entry, options={**entry.options, CONF_DOMAIN_GROUPS: groups}
     )
