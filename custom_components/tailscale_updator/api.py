@@ -1,6 +1,7 @@
 """OAuth client credentials and conditional Tailscale policy writes."""
 
 import asyncio
+import json
 import math
 import time
 from dataclasses import dataclass
@@ -103,12 +104,12 @@ class TailscaleClient:
             ) as err:
                 raise ApiError("Could not obtain OAuth token") from err
 
-    async def _request(self, method: str, *, body=None, etag=None):
+    async def _request(self, method: str, *, body=None, etag=None, url=None):
         for attempt in range(2):
             token = await self._access_token()
             headers = {
                 "Authorization": f"Bearer {token}",
-                "Accept": "application/hujson",
+                "Accept": "application/json" if url else "application/hujson",
             }
             if body is not None:
                 headers["Content-Type"] = "application/hujson"
@@ -116,7 +117,7 @@ class TailscaleClient:
             try:
                 async with self.session.request(
                     method,
-                    self._url,
+                    url or self._url,
                     headers=headers,
                     data=body,
                     timeout=ClientTimeout(total=30),
@@ -144,6 +145,60 @@ class TailscaleClient:
                 "Tailscale returned an invalid JSONC policy"
             ) from err
         return Snapshot(text, etag)
+
+    async def get_tailnet_name(self) -> str:
+        """Discover the current tailnet without asking for a tailnet identifier.
+
+        Shared devices belong to other tailnets and must never supply the title.
+        Metadata scopes are optional: failure does not prevent policy management.
+        """
+        root = f"{API_BASE}/tailnet/{quote(self.tailnet, safe='')}"
+        for resource in ("devices", "users"):
+            try:
+                text, _ = await self._request("GET", url=f"{root}/{resource}")
+                data = json.loads(text)
+                values = data.get(resource, [])
+                if not isinstance(values, list):
+                    continue
+                names = set()
+                for value in values:
+                    if not isinstance(value, dict):
+                        continue
+                    if resource == "devices":
+                        name = value.get("name")
+                        if value.get("isExternal") or not isinstance(name, str):
+                            continue
+                        suffix = name.rstrip(".").lower().partition(".")[2]
+                        if suffix.endswith(".ts.net") and len(suffix.split(".")) == 3:
+                            names.add(suffix)
+                    elif value.get("type") == "member":
+                        name = value.get("tailnetId")
+                        if isinstance(name, str) and name.strip():
+                            names.add(name.strip())
+                if len(names) == 1:
+                    return names.pop()
+            except AuthError:
+                raise
+            except (ApiError, ValueError, AttributeError):
+                continue
+        return "Tailscale OAuth"
+
+    async def normalize_initial_domains(self) -> Snapshot:
+        """Normalize registration-time domains, rebasing concurrent policy edits."""
+        async with self.write_lock:
+            for attempt in range(3):
+                snapshot = await self.get_policy()
+                updated = snapshot.policy.normalize_connector_domains()
+                if updated == snapshot.text:
+                    return snapshot
+                try:
+                    await self._write(updated, snapshot.etag, snapshot.text)
+                except ConflictError:
+                    if attempt < 2:
+                        continue
+                    raise
+                return await self.get_policy()
+        raise ConflictError("Policy remained busy")
 
     async def _write(self, text: str, etag: str, original: str):
         if not etag or etag.strip() == "*":

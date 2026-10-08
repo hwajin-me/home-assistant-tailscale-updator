@@ -12,7 +12,9 @@ Home Assistant **2025.4.4 이상**이 필요합니다. 통합 화면의 로컬 T
 2. 또는 HACS → 사용자 지정 저장소에 이 저장소를 **Integration**으로 추가하고 설치합니다. GitHub에 저장소와 릴리스가 게시되어 있어야 합니다.
 3. Tailscale 관리 콘솔의 **Trust credentials / OAuth clients**에서 OAuth 클라이언트를 만들고 **policy_file 쓰기** 권한을 부여합니다. 예전 UI에서는 `acl`로 표시될 수 있습니다. 장치 인증 키(`tskey-auth`)나 일반 API 키가 아닙니다.
 4. HA → 설정 → 기기 및 서비스 → 통합 구성요소 추가 → **Tailscale Updator**에서 Client ID와 Client Secret을 입력합니다. Tailnet 입력란은 없으며, OAuth 클라이언트가 속한 tailnet을 자동으로 사용합니다. 기존 설정에 저장된 tailnet 이름도 더 이상 연결에 사용하지 않습니다.
-5. ACL에 이미 있는 app connector 도메인은 첫 연결 때 자동으로 switch로 생성됩니다. 통합의 **구성**에서 앱 이름을 선택해 도메인 쌍을 직접 추가·제거·이름 변경할 수 있습니다.
+5. 인증 후 도메인 그룹을 여러 개 지정하거나 건너뛰고 **설정 완료 → 등록 완료**를 누릅니다. 등록 완료 시 각 app connector의 기존 도메인을 정규화하여 중복을 제거하고 `domain` / `*.domain` 쌍을 완성합니다. ACL에 있는 도메인은 On 스위치로 생성됩니다. 서로 다른 connector의 같은 도메인은 각각 유지하며, 이후 새로고침에서는 없는 도메인을 다시 추가하지 않습니다. 통합의 **구성**에서 앱 이름을 선택해 도메인 쌍을 직접 추가·제거·이름 변경할 수 있습니다.
+
+기본 통합·기기 이름은 내부 장치의 Tailnet DNS 이름(`*.ts.net`)을 사용합니다. 장치가 없으면 `users:read`로 조회한 Tailnet ID를 사용합니다. 공유받은 외부 장치는 제외합니다. `devices:core:read` 또는 `users:read`가 없어 이름을 확인할 수 없다면 `Tailscale OAuth`로 등록되며 HA에서 이름을 변경할 수 있습니다. 이름 조회 실패는 정책 관리를 차단하지 않습니다.
 
 이 인증은 OAuth 2.0 **client credentials** 방식입니다. 브라우저 리디렉션 로그인이나 refresh token을 사용하지 않습니다. 요청 시 토큰 만료 60초 전부터 새 토큰을 발급하고, API가 401을 반환하면 한 번 재발급하여 재시도합니다. HA 재시작 후 저장된 자격 증명으로 다시 토큰을 발급합니다. 폐기된 자격 증명은 HA 재인증 흐름으로 갱신할 수 있습니다.
 

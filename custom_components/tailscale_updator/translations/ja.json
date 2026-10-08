@@ -16,6 +16,25 @@
           "client_id": "OAuth クライアント ID",
           "client_secret": "OAuth クライアントシークレット"
         }
+      },
+      "initial_groups": {
+        "title": "ドメイングループ",
+        "menu_options": {
+          "initial_group": "ドメイングループを追加",
+          "finish": "設定を完了"
+        }
+      },
+      "initial_group": {
+        "title": "ドメイングループ",
+        "description": "グループは Home Assistant 内にのみ保存されます。複数のアプリコネクターのドメインを選択し、グループスイッチでまとめて切り替えます。",
+        "data": {
+          "name": "グループ名",
+          "members": "ドメイン一覧"
+        }
+      },
+      "finish": {
+        "title": "登録を完了",
+        "description": "完了すると既存の App Connector ドメインの重複を削除し、domain / *.domain のペアを補完します。他のポリシー領域は保持されます。グループは後から設定メニューでも管理できます。"
       }
     },
     "error": {
@@ -24,7 +43,8 @@
       "policy_forbidden": "Tailscale ACL API が HTTP 403 を返しました。OAuth クライアントの policy_file 権限と tailnet へのアクセス権を確認してください。",
       "tailnet_not_found": "Tailscale ACL API が HTTP 404 を返しました。OAuth クライアントの tailnet ポリシーが見つかりません。",
       "api_error": "Tailscale ACL API がエラーを返しました。Home Assistant のログで HTTP ステータスを確認してください。",
-      "invalid_policy": "Tailscale が返したポリシーを解析できませんでした。Home Assistant のログを確認してください。"
+      "invalid_policy": "Tailscale が返したポリシーを解析できませんでした。Home Assistant のログを確認してください。",
+      "invalid_group": "グループ名と選択したドメインを確認してください。他でグループが変更または削除された場合は、編集画面を開き直してください。"
     },
     "abort": {
       "already_configured": "この OAuth クライアントは既に設定されています。",

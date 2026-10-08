@@ -116,11 +116,19 @@ async def test_user_flow_and_auth_errors(hass):
         "client_id",
         "client_secret",
     }
-    with patch.object(flow, "_validate", AsyncMock()):
+    client = MagicMock()
+    client.get_tailnet_name = AsyncMock(return_value="my-tail.ts.net")
+    client.normalize_initial_domains = AsyncMock()
+    with patch.object(
+        flow, "_validate", AsyncMock(return_value=(client, Snapshot("{}", '"1"')))
+    ):
         result = await flow.async_step_user(credentials)
+        assert result["step_id"] == "initial_groups"
+        client.normalize_initial_domains.assert_not_awaited()
+        result = await flow.async_step_finish({})
         assert result["type"] == "create_entry"
         assert result["data"] == credentials
-        assert result["title"] == "Tailscale OAuth"
+        assert result["title"] == "my-tail.ts.net"
         flow.async_set_unique_id.assert_awaited_with("oauth:id")
     with patch.object(flow, "_validate", AsyncMock(side_effect=AuthError())):
         result = await flow.async_step_user(credentials)
@@ -486,3 +494,34 @@ async def test_scoped_policy_edit_preserves_previously_absent_domains(hass, entr
     await coordinator.async_replace_connectors(policy([]), '"1"')
     assert all(registry.async_get(entity.entity_id) is not None for entity in saved)
     hass.config_entries.async_update_entry.assert_not_called()
+
+
+async def test_initial_groups_validate_members_and_duplicate_names(hass):
+    import json
+
+    flow = ConfigFlow()
+    flow.hass = hass
+    flow._snapshot = Snapshot(policy(["a.com", "A.COM", "*.a.com"]), '"1"')
+    flow._groups = {}
+    form = await flow.async_step_initial_group()
+    schema = form["data_schema"].schema
+    selector = next(value for key, value in schema.items() if str(key) == "members")
+    assert len(selector.config["options"]) == 1
+    result = await flow.async_step_initial_group(
+        {"name": "Video", "members": [json.dumps(["app", "a.com"])]}
+    )
+    assert result["step_id"] == "initial_groups"
+    assert list(flow._groups.values()) == [
+        {"name": "Video", "members": [{"connector": "app", "domain": "a.com"}]}
+    ]
+    for name, member in [("video", "a.com"), ("Other", "missing.com")]:
+        result = await flow.async_step_initial_group(
+            {"name": name, "members": [json.dumps(["app", member])]}
+        )
+        assert result["errors"]["base"] == "invalid_group"
+    flow._client = MagicMock(
+        normalize_initial_domains=AsyncMock(side_effect=ApiHttpError(403))
+    )
+    result = await flow.async_step_finish({})
+    assert result["errors"]["base"] == "policy_forbidden"
+    assert len(flow._groups) == 1

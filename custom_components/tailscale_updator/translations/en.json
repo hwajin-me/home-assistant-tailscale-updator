@@ -16,6 +16,25 @@
           "client_id": "OAuth Client ID",
           "client_secret": "OAuth Client Secret"
         }
+      },
+      "initial_groups": {
+        "title": "Domain groups",
+        "menu_options": {
+          "initial_group": "Add domain group",
+          "finish": "Finish setup"
+        }
+      },
+      "initial_group": {
+        "title": "Domain group",
+        "description": "Groups are stored only in Home Assistant. Select domains from one or more app connectors. The group switch changes all members together.",
+        "data": {
+          "name": "Group name",
+          "members": "Domains"
+        }
+      },
+      "finish": {
+        "title": "Complete registration",
+        "description": "Existing app connector domains will be deduplicated and completed into domain / *.domain pairs when you finish. Other policy sections are preserved. You can manage groups later in Configure."
       }
     },
     "error": {
@@ -24,7 +43,8 @@
       "policy_forbidden": "Tailscale ACL API returned HTTP 403. Check the OAuth client’s policy_file permission and access to its tailnet.",
       "tailnet_not_found": "Tailscale ACL API returned HTTP 404. The OAuth client’s tailnet policy could not be found.",
       "api_error": "Tailscale ACL API returned an error. Check the Home Assistant log for the HTTP status.",
-      "invalid_policy": "The policy returned by Tailscale could not be parsed. Check the Home Assistant log."
+      "invalid_policy": "The policy returned by Tailscale could not be parsed. Check the Home Assistant log.",
+      "invalid_group": "Check the group name and selected domains. If the group changed or was deleted elsewhere, reopen the editor."
     },
     "abort": {
       "already_configured": "This OAuth client is already configured.",

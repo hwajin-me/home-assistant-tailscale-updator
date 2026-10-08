@@ -3,6 +3,7 @@
 import copy
 import json
 import logging
+import uuid
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -56,7 +57,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data[CONF_CLIENT_ID],
             data[CONF_CLIENT_SECRET],
         )
-        await client.get_policy()
+        snapshot = await client.get_policy()
+        return client, snapshot
 
     async def async_step_user(self, user_input=None):
         errors = {}
@@ -72,15 +74,104 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {CONF_CLIENT_ID: user_input[CONF_CLIENT_ID]}
             )
             try:
-                await self._validate(user_input)
+                client, snapshot = await self._validate(user_input)
+                snapshot.policy.normalize_connector_domains()
+                title = await client.get_tailnet_name()
             except AuthError:
                 errors["base"] = "invalid_auth"
             except (ApiError, PolicyError) as err:
                 errors["base"] = policy_read_error(err)
             else:
-                return self.async_create_entry(title="Tailscale OAuth", data=user_input)
+                self._credentials = user_input
+                self._client = client
+                self._snapshot = snapshot
+                self._title = title
+                self._groups = {}
+                return await self.async_step_initial_groups()
         return self.async_show_form(
             step_id="user", data_schema=credentials_schema(), errors=errors
+        )
+
+    async def async_step_initial_groups(self, user_input=None):
+        return self.async_show_menu(
+            step_id="initial_groups", menu_options=["initial_group", "finish"]
+        )
+
+    async def async_step_initial_group(self, user_input=None):
+        errors = {}
+        pairs = set()
+        for name, node in self._snapshot.policy.connectors().items():
+            if "presetAppID" in node.value or "domains" not in node.value:
+                continue
+            pairs.update(
+                (name, domain)
+                for domain in domain_bases(self._snapshot.policy.domains(name))
+            )
+        if user_input is not None:
+            try:
+                name = user_input["name"].strip()
+                selected = {tuple(json.loads(value)) for value in user_input["members"]}
+                if (
+                    not name
+                    or not selected
+                    or not selected <= pairs
+                    or any(
+                        group["name"].casefold() == name.casefold()
+                        for group in self._groups.values()
+                    )
+                ):
+                    raise PolicyError("Invalid group")
+                self._groups[uuid.uuid4().hex] = {
+                    "name": name,
+                    "members": [
+                        {"connector": connector, "domain": domain}
+                        for connector, domain in sorted(selected)
+                    ],
+                }
+            except (PolicyError, ValueError, TypeError):
+                errors["base"] = "invalid_group"
+            else:
+                return await self.async_step_initial_groups()
+        return self.async_show_form(
+            step_id="initial_group",
+            errors=errors,
+            data_schema=vol.Schema(
+                {
+                    vol.Required("name"): str,
+                    vol.Required("members"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            multiple=True,
+                            options=[
+                                {
+                                    "value": json.dumps([connector, domain]),
+                                    "label": f"{connector}: {domain}",
+                                }
+                                for connector, domain in sorted(pairs)
+                            ],
+                        )
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_finish(self, user_input=None):
+        errors = {}
+        if user_input is not None:
+            try:
+                # Re-read at completion so an abandoned flow never writes the ACL.
+                await self._client.normalize_initial_domains()
+            except AuthError:
+                errors["base"] = "invalid_auth"
+            except (ApiError, PolicyError) as err:
+                errors["base"] = policy_read_error(err)
+            else:
+                return self.async_create_entry(
+                    title=self._title,
+                    data=self._credentials,
+                    options={CONF_DOMAIN_GROUPS: self._groups},
+                )
+        return self.async_show_form(
+            step_id="finish", data_schema=vol.Schema({}), errors=errors
         )
 
     async def async_step_reauth(self, entry_data):

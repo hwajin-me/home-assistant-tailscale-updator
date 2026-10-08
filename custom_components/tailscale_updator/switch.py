@@ -100,7 +100,7 @@ class DomainSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_name = f"{connector}: {self.domain}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=f"Tailscale {entry.title}",
+            name=entry.title,
             manufacturer="Tailscale",
         )
 
