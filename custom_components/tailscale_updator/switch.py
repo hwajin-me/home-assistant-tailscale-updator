@@ -3,16 +3,17 @@
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_DOMAIN_GROUPS, DOMAIN
+from .const import CONF_DOMAIN_GROUPS
+from .devices import domain_device_info, group_device_info, reconcile_devices
 from .groups import group_unique_id
 from .policy import PolicyError, domain_base, domain_bases, normalize_domain
 from .registry import domain_entries, registered_pair, remembered_pairs, unique_id
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
+    reconcile_devices(hass, entry)
     manager = DomainSwitchManager(hass, entry, async_add_entities)
     manager.reconcile()
     async_add_entities(
@@ -98,11 +99,7 @@ class DomainSwitch(CoordinatorEntity, SwitchEntity):
         self.domain = domain_base(domain)
         self._attr_unique_id = unique_id(entry.entry_id, connector, self.domain)
         self._attr_name = f"{connector}: {self.domain}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
-            manufacturer="Tailscale",
-        )
+        self._attr_device_info = domain_device_info(entry)
 
     def _domains(self) -> set[str]:
         return {
@@ -159,11 +156,8 @@ class DomainGroupSwitch(CoordinatorEntity, SwitchEntity):
         self.entry = entry
         self.group_id = group_id
         self._attr_unique_id = group_unique_id(entry.entry_id, group_id)
-        self._attr_name = self._group["name"]
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            manufacturer="Tailscale",
-        )
+        self._attr_name = None
+        self._attr_device_info = group_device_info(entry, group_id)
 
     @property
     def _group(self):

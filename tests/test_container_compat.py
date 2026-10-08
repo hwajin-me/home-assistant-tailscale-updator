@@ -145,14 +145,30 @@ async def test_container_end_to_end(tmp_path):
             await hass.async_block_till_done()
             assert entry.state is ConfigEntryState.LOADED
             assert entry.title == "my-tail.ts.net"
-            device = next(
-                iter(
-                    dr.async_entries_for_config_entry(
-                        dr.async_get(hass), entry.entry_id
-                    )
-                )
+            devices = dr.async_get(hass)
+            initial_devices = dr.async_entries_for_config_entry(devices, entry.entry_id)
+            assert len(initial_devices) == 3
+            parent = next(
+                device
+                for device in initial_devices
+                if (DOMAIN, entry.entry_id) in device.identifiers
             )
-            assert device.name == entry.title
+            assert parent.name == entry.title
+            domain_device = next(
+                device
+                for device in initial_devices
+                if device.name == "Tailscale Domain"
+            )
+            initial_group_device = next(
+                device
+                for device in initial_devices
+                if device.name == "Group - Initial group"
+            )
+            assert (
+                domain_device.via_device_id
+                == initial_group_device.via_device_id
+                == parent.id
+            )
             assert domains == ["example.com", "*.example.com"]
             initial_groups = entry.options["domain_groups"]
             assert len(initial_groups) == 1
@@ -162,6 +178,45 @@ async def test_container_end_to_end(tmp_path):
             group_entity = next(
                 entity for entity in group_entities if ":group:" in entity.unique_id
             )
+            assert group_entity.device_id == initial_group_device.id
+            assert all(
+                entity.device_id == domain_device.id
+                for entity in group_entities
+                if ":group:" not in entity.unique_id
+            )
+            assert hass.states.get(group_entity.entity_id).state == "on"
+            # Upgrade a legacy entry where every switch shared the tailnet device.
+            # Disabled entities and user names must migrate without new entity IDs.
+            registry = er.async_get(hass)
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            identities = {
+                entity.entity_id: entity.unique_id for entity in group_entities
+            }
+            for entity in group_entities:
+                registry.async_update_entity(
+                    entity.entity_id, device_id=parent.id, name="My saved name"
+                )
+            registry.async_update_entity(
+                group_entity.entity_id, disabled_by=er.RegistryEntryDisabler.USER
+            )
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+            for entity_id, entity_unique_id in identities.items():
+                migrated = registry.async_get(entity_id)
+                assert migrated.unique_id == entity_unique_id
+                assert migrated.name == "My saved name"
+                assert migrated.device_id == (
+                    initial_group_device.id
+                    if ":group:" in entity_unique_id
+                    else domain_device.id
+                )
+            assert (
+                registry.async_get(group_entity.entity_id).disabled_by
+                == er.RegistryEntryDisabler.USER
+            )
+            registry.async_update_entity(group_entity.entity_id, disabled_by=None)
+            assert await hass.config_entries.async_reload(entry.entry_id)
+            await hass.async_block_till_done()
             assert hass.states.get(group_entity.entity_id).state == "on"
             options = await hass.config_entries.options.async_init(entry.entry_id)
             options = await hass.config_entries.options.async_configure(
@@ -171,6 +226,7 @@ async def test_container_end_to_end(tmp_path):
                 options["flow_id"], {"group_id": next(iter(initial_groups))}
             )
             await hass.async_block_till_done()
+            assert devices.async_get(initial_group_device.id) is None
             entries = er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
             )
@@ -386,6 +442,9 @@ async def test_container_end_to_end(tmp_path):
                 for e in er.async_entries_for_config_entry(registry, entry.entry_id)
                 if ":group:" in e.unique_id
             )
+            group_device_id = group_entity.device_id
+            assert group_device_id != external.device_id
+            assert devices.async_get(group_device_id).via_device_id == parent.id
             assert hass.states.get(group_entity.entity_id).state == "off"
             assert hass.states.get(group_entity.entity_id).attributes["partially_on"]
             await hass.services.async_call(
@@ -436,6 +495,10 @@ async def test_container_end_to_end(tmp_path):
                 registry.async_get(group_entity.entity_id).unique_id
                 == group_entity.unique_id
             )
+            assert (
+                registry.async_get(group_entity.entity_id).device_id == group_device_id
+            )
+            assert devices.async_get(group_device_id).name == "Group - Media"
             # Explicit deletion also removes group membership, so group On cannot resurrect it.
             await hass.services.async_call(
                 DOMAIN,
@@ -473,6 +536,7 @@ async def test_container_end_to_end(tmp_path):
             await hass.async_block_till_done()
             assert len(writes) == previous_writes
             assert registry.async_get(group_entity.entity_id) is None
+            assert devices.async_get(group_device_id) is None
             assert hass.states.get(added.entity_id).state == "on"
             # Renaming an active domain migrates group membership instead of resurrecting the old name.
             await hass.services.async_call(
