@@ -38,7 +38,7 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
         ):
             token(mock)
             token(mock)
-            server_domains = ["a.com"]
+            server_domains = ["a.com", "A.COM", "a.com"]
 
             def read_policy(url, **kwargs):
                 return CallbackResult(
@@ -52,6 +52,12 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
                 ][0]["domains"]
                 return CallbackResult(body=policy(server_domains))
 
+            mock.get(
+                f"{API_BASE}/tailnet/-/devices",
+                payload={
+                    "devices": [{"name": "node.my-tail.ts.net", "isExternal": False}]
+                },
+            )
             mock.get(ACL, callback=read_policy, repeat=True)
             mock.post(ACL, callback=write_policy, repeat=True)
             result = await hass.config_entries.flow.async_init(
@@ -61,6 +67,13 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
                     "client_id": "id",
                     "client_secret": "secret",
                 },
+            )
+            assert result["step_id"] == "initial_groups"
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {"next_step_id": "finish"}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {}
             )
             assert result["type"] == "create_entry"
             entry = result["result"]
@@ -72,9 +85,9 @@ async def test_real_flow_setup_options_switch_and_unload(tmp_path):
             )
             assert len(entities) == 1
             initial = entities[0]
-            assert hass.states.get(initial.entity_id).state == "off"
+            assert hass.states.get(initial.entity_id).state == "on"
             assert hass.states.get(initial.entity_id).attributes["parent_present"]
-            assert not hass.states.get(initial.entity_id).attributes["wildcard_present"]
+            assert hass.states.get(initial.entity_id).attributes["wildcard_present"]
             await hass.services.async_call(
                 "switch", "turn_on", {"entity_id": initial.entity_id}, blocking=True
             )

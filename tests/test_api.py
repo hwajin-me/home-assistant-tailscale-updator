@@ -351,3 +351,84 @@ async def test_malformed_remote_policy_is_a_remote_failure(client):
         mock.get(ACL, body="<html>Bad upstream response</html>")
         with pytest.raises(PolicyResponseError):
             await client.get_policy()
+
+
+async def test_registration_cleanup_rebases_conflict_and_is_conditional(client):
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body=policy(["A.COM", "a.com"]), headers={"ETag": '"1"'})
+        mock.post(ACL, status=412)
+        mock.get(ACL, body=policy(["a.com", "B.COM"]), headers={"ETag": '"2"'})
+        mock.post(ACL, status=200)
+        mock.get(
+            ACL,
+            body=policy(["a.com", "b.com", "*.a.com", "*.b.com"]),
+            headers={"ETag": '"3"'},
+        )
+        snapshot = await client.normalize_initial_domains()
+        assert snapshot.policy.domains("app") == [
+            "a.com",
+            "b.com",
+            "*.a.com",
+            "*.b.com",
+        ]
+        requests = mock.requests[
+            ("POST", next(k[1] for k in mock.requests if str(k[1]) == ACL))
+        ]
+        assert requests[-1].kwargs["headers"]["If-Match"] == '"2"'
+        assert json.loads(requests[-1].kwargs["data"])["nodeAttrs"][0]["app"][
+            "tailscale.com/app-connectors"
+        ][0]["domains"] == ["a.com", "b.com", "*.a.com", "*.b.com"]
+
+
+async def test_registration_complete_pairs_need_no_write(client):
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(ACL, body=policy(["a.com", "*.a.com"]), headers={"ETag": '"1"'})
+        await client.normalize_initial_domains()
+        assert not any(
+            method == "POST" and str(url) == ACL for method, url in mock.requests
+        )
+
+
+@pytest.mark.parametrize(
+    "devices,expected",
+    [
+        (
+            [
+                {"name": "host.my-tail.ts.net"},
+                {"name": "shared.foreign.ts.net", "isExternal": True},
+            ],
+            "my-tail.ts.net",
+        ),
+        ([], "T123456"),
+        ([{"name": "one.first.ts.net"}, {"name": "two.second.ts.net"}], "T123456"),
+    ],
+)
+async def test_tailnet_title_excludes_shared_devices_and_falls_back_to_id(
+    client, devices, expected
+):
+    root = f"{API_BASE}/tailnet/example.com"
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(f"{root}/devices", payload={"devices": devices})
+        if expected == "T123456":
+            mock.get(
+                f"{root}/users",
+                payload={
+                    "users": [
+                        {"type": "member", "tailnetId": "T123456"},
+                        {"type": "shared", "tailnetId": "FOREIGN"},
+                    ]
+                },
+            )
+        assert await client.get_tailnet_name() == expected
+
+
+async def test_title_metadata_permissions_do_not_block_policy_registration(client):
+    root = f"{API_BASE}/tailnet/example.com"
+    with aioresponses() as mock:
+        token(mock)
+        mock.get(f"{root}/devices", status=403)
+        mock.get(f"{root}/users", status=403)
+        assert await client.get_tailnet_name() == "Tailscale OAuth"

@@ -180,6 +180,16 @@ class Policy:
             )
         return domains
 
+    def normalize_connector_domains(self) -> str:
+        """Deduplicate existing explicit domains and complete their pairs."""
+        updated = self.source
+        for name, node in self.connectors().items():
+            if "presetAppID" in node.value or "domains" not in node.value:
+                continue
+            bases = domain_bases(self.domains(name))
+            updated = Policy(updated).set_domains(name, sorted(bases), True)
+        return updated
+
     def set_domains(self, name: str, domains: list[str], enabled: bool) -> str:
         """Change complete parent/wildcard pairs for the requested domains."""
         return self.change_domain_pairs(

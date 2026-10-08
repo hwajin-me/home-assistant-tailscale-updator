@@ -22,8 +22,15 @@ from custom_components.tailscale_updator.api import ConflictError
 from custom_components.tailscale_updator.const import DOMAIN
 
 
+class CompatDNSResolver(ThreadedResolver):
+    """Support both old session cleanup and current HA resolver cleanup."""
+
+    async def real_close(self):
+        await super().close()
+
+
 async def test_container_end_to_end(tmp_path):
-    domains = ["example.com"]
+    domains = ["example.com", "EXAMPLE.COM.", ".example.com"]
     writes = []
     version = 1
     token_calls = 0
@@ -71,6 +78,13 @@ async def test_container_end_to_end(tmp_path):
         )
 
     application = web.Application()
+
+    async def devices(request):
+        return web.json_response(
+            {"devices": [{"name": "node.my-tail.ts.net", "isExternal": False}]}
+        )
+
+    application.router.add_get("/api/v2/tailnet/-/devices", devices)
     application.router.add_post("/api/v2/oauth/token", token)
     application.router.add_route("*", "/api/v2/tailnet/-/acl", acl)
     runner = web.AppRunner(application)
@@ -98,7 +112,7 @@ async def test_container_end_to_end(tmp_path):
             ),
             patch(
                 "homeassistant.helpers.aiohttp_client._async_make_resolver",
-                return_value=ThreadedResolver(),
+                return_value=CompatDNSResolver(),
             ),
         ):
             result = await hass.config_entries.flow.async_init(
@@ -109,16 +123,60 @@ async def test_container_end_to_end(tmp_path):
                     "client_secret": "test-secret",
                 },
             )
+            assert result["step_id"] == "initial_groups"
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {"next_step_id": "initial_group"}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {
+                    "name": "Initial group",
+                    "members": [json.dumps(["app", "example.com"])],
+                },
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {"next_step_id": "finish"}
+            )
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], {}
+            )
             assert result["type"] == "create_entry"
             entry = result["result"]
             await hass.async_block_till_done()
             assert entry.state is ConfigEntryState.LOADED
+            assert entry.title == "my-tail.ts.net"
+            device = next(
+                iter(
+                    dr.async_entries_for_config_entry(
+                        dr.async_get(hass), entry.entry_id
+                    )
+                )
+            )
+            assert device.name == entry.title
+            assert domains == ["example.com", "*.example.com"]
+            initial_groups = entry.options["domain_groups"]
+            assert len(initial_groups) == 1
+            group_entities = er.async_entries_for_config_entry(
+                er.async_get(hass), entry.entry_id
+            )
+            group_entity = next(
+                entity for entity in group_entities if ":group:" in entity.unique_id
+            )
+            assert hass.states.get(group_entity.entity_id).state == "on"
+            options = await hass.config_entries.options.async_init(entry.entry_id)
+            options = await hass.config_entries.options.async_configure(
+                options["flow_id"], {"next_step_id": "group_delete"}
+            )
+            await hass.config_entries.options.async_configure(
+                options["flow_id"], {"group_id": next(iter(initial_groups))}
+            )
+            await hass.async_block_till_done()
             entries = er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
             )
             assert len(entries) == 1
             initial = entries[0]
-            assert hass.states.get(initial.entity_id).state == "off"
+            assert hass.states.get(initial.entity_id).state == "on"
 
             await hass.services.async_call(
                 "switch", "turn_on", {"entity_id": initial.entity_id}, blocking=True

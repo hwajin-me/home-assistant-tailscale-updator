@@ -259,3 +259,30 @@ def test_connector_create_update_delete_preserves_every_other_source_byte():
     assert result.endswith(POLICY[node.end :])
     assert set(Policy(result).connectors()) == {"Streaming", "Created"}
     assert Policy(result).outside_connectors() == policy.outside_connectors()
+
+
+def test_registration_normalizes_duplicates_and_partial_pairs_per_connector():
+    source = POLICY.replace(
+        '"example.com", "*.example.com",',
+        '"EXAMPLE.com.", ".example.com", "*.EXAMPLE.COM", "example.com",',
+    )
+    result = Policy(source).normalize_connector_domains()
+    parsed = Policy(result)
+    assert parsed.domains("Streaming") == ["example.com", "*.example.com"]
+    assert parsed.domains("Other") == ["other.com", "*.other.com"]
+    assert parsed.outside_connectors() == Policy(source).outside_connectors()
+    assert result.startswith(source[: source.index('"domains"')])
+    assert parsed.normalize_connector_domains() == result
+
+
+def test_registration_keeps_cross_connector_overlap_and_presets():
+    source = POLICY.replace('"other.com"', '"example.com"').replace(
+        '{"name": "Other",',
+        '{"name": "Preset", "presetAppID": "github"}, {"name": "Other",',
+    )
+    result = Policy(Policy(source).normalize_connector_domains())
+    assert result.domains("Streaming") == result.domains("Other")
+    assert result.connectors()["Preset"].value == {
+        "name": "Preset",
+        "presetAppID": "github",
+    }
