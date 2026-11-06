@@ -1,0 +1,6 @@
+{
+  "name": "Tailscale Updator",
+  "homeassistant": "2025.4.4",
+  "zip_release": true,
+  "filename": "tailscale_updator.zip"
+}

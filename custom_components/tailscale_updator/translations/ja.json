@@ -1,0 +1,266 @@
+{
+  "title": "Tailscale Updator",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tailscale OAuth クライアント",
+        "description": "policy_file の書き込み権限を持つ OAuth クライアント ID とシークレットを入力してください。クライアントの tailnet を自動的に使用します。既存のアプリコネクターのドメインはスイッチとして追加されます。",
+        "data": {
+          "client_id": "OAuth クライアント ID",
+          "client_secret": "OAuth クライアントシークレット"
+        }
+      },
+      "reauth_confirm": {
+        "title": "OAuth 認証情報を更新",
+        "data": {
+          "client_id": "OAuth クライアント ID",
+          "client_secret": "OAuth クライアントシークレット"
+        }
+      },
+      "initial_groups": {
+        "title": "ドメイングループ",
+        "menu_options": {
+          "initial_group": "ドメイングループを追加",
+          "finish": "設定を完了"
+        }
+      },
+      "initial_group": {
+        "title": "ドメイングループ",
+        "description": "グループは Home Assistant 内にのみ保存されます。複数のアプリコネクターのドメインを選択し、グループスイッチでまとめて切り替えます。",
+        "data": {
+          "name": "グループ名",
+          "members": "ドメイン一覧"
+        }
+      },
+      "finish": {
+        "title": "登録を完了",
+        "description": "完了すると既存の App Connector ドメインの重複を削除し、domain / *.domain のペアを補完します。他のポリシー領域は保持されます。グループは後から設定メニューでも管理できます。"
+      }
+    },
+    "error": {
+      "invalid_auth": "OAuth 認証情報が拒否されました。",
+      "cannot_connect": "Tailscale API への接続または OAuth トークンの取得に失敗しました。接続を確認して再試行してください。",
+      "policy_forbidden": "Tailscale ACL API が HTTP 403 を返しました。OAuth クライアントの policy_file 権限と tailnet へのアクセス権を確認してください。",
+      "tailnet_not_found": "Tailscale ACL API が HTTP 404 を返しました。OAuth クライアントの tailnet ポリシーが見つかりません。",
+      "api_error": "Tailscale ACL API がエラーを返しました。Home Assistant のログで HTTP ステータスを確認してください。",
+      "invalid_policy": "Tailscale が返したポリシーを解析できませんでした。Home Assistant のログを確認してください。",
+      "invalid_group": "グループ名と選択したドメインを確認してください。他でグループが変更または削除された場合は、編集画面を開き直してください。"
+    },
+    "abort": {
+      "already_configured": "この OAuth クライアントは既に設定されています。",
+      "reauth_successful": "OAuth 認証情報を更新しました。"
+    }
+  },
+  "options": {
+    "step": {
+      "change": {
+        "title": "{connector} のドメインを編集",
+        "description": "ドメインと *.ドメインをペアで保存します。削除するとスイッチも削除されます。ACL にないオフのドメインも削除できます。",
+        "data": {
+          "existing_domain": "既存のドメイン",
+          "domain": "ドメイン"
+        }
+      },
+      "domains": {
+        "title": "アプリコネクターのドメインを管理",
+        "description": "既存のアプリコネクターを選び、ドメインのペアを追加・削除するか名前を変更します。",
+        "data": {
+          "connector": "アプリコネクター名",
+          "action": "操作"
+        }
+      },
+      "init": {
+        "title": "Tailscale の管理",
+        "menu_options": {
+          "domains": "ドメインの管理",
+          "group_add": "ドメイングループを追加",
+          "group_edit": "ドメイングループを編集",
+          "group_move": "ドメインを移動",
+          "group_delete": "ドメイングループを削除"
+        }
+      },
+      "group_edit": {
+        "title": "ドメイングループを編集",
+        "data": {
+          "group_id": "グループ"
+        }
+      },
+      "group_delete": {
+        "title": "ドメイングループを削除",
+        "data": {
+          "group_id": "グループ"
+        }
+      },
+      "group_move": {
+        "title": "ドメインを移動",
+        "data": {
+          "group_id": "移動元グループ"
+        }
+      },
+      "group_move_target": {
+        "title": "ドメインを移動",
+        "data": {
+          "target_group_id": "移動先グループ",
+          "members": "移動するドメイン"
+        }
+      },
+      "group_details": {
+        "title": "ドメイングループ",
+        "description": "グループは Home Assistant 内にのみ保存されます。複数のアプリコネクターのドメインを選択し、グループスイッチでまとめて切り替えます。",
+        "data": {
+          "name": "グループ名",
+          "members": "ドメイン一覧"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "OAuth 認証情報が拒否されました。",
+      "invalid_domains": "ドメインの形式とアプリコネクターの現在のドメイン一覧を確認してください。",
+      "cannot_connect": "ポリシーの保存または再読み込みに失敗しました。",
+      "invalid_group": "グループ名と選択したドメインを確認してください。他でグループが変更または削除された場合は、編集画面を開き直してください。"
+    },
+    "abort": {
+      "cannot_connect": "ポリシーを読み取れませんでした。",
+      "no_connectors": "編集可能な明示的ドメイン一覧を持つアプリコネクターが見つかりません。",
+      "no_domains": "このアプリコネクターにはまだドメインがありません。",
+      "updated": "ACL ドメインを更新しました。",
+      "invalid_auth": "OAuth 認証情報が拒否されました。",
+      "no_groups": "ドメイングループが設定されていません。",
+      "no_group_domains": "このグループには移動するドメインがありません。",
+      "group_updated": "ドメイングループを更新しました。"
+    }
+  },
+  "selector": {
+    "domain_action": {
+      "options": {
+        "add": "追加",
+        "remove": "削除",
+        "rename": "名前を変更"
+      }
+    }
+  },
+  "services": {
+    "get_acl": {
+      "name": "ACL を取得",
+      "description": "現在の JSONC ポリシーと ETag を読み取ります。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        }
+      }
+    },
+    "set_acl": {
+      "name": "アプリコネクターを編集",
+      "description": "現在の ETag を使用して既存の nodeAttrs の app-connectors 配列のみを編集します。grants、SSH、タグ、グループ、target などの変更は拒否され、その他の原文は保持されます。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "policy": {
+          "name": "ポリシー",
+          "description": "JSONC/HuJSON ポリシー文書全体。"
+        },
+        "expected_etag": {
+          "name": "期待する ETag",
+          "description": "「ACL を取得」が返した ETag。同時に行われた変更の上書きを防ぎます。"
+        }
+      }
+    },
+    "add_domains": {
+      "name": "ドメインを追加",
+      "description": "既存のアプリコネクターに各ドメインとワイルドカードをペアで追加します。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "connector": {
+          "name": "アプリコネクター名",
+          "description": "ポリシー内のアプリコネクター名。ノード名やタグではありません。"
+        },
+        "domains": {
+          "name": "ドメイン一覧",
+          "description": "ドメイン名の一覧。各ドメインとワイルドカードを一緒に管理します。"
+        }
+      }
+    },
+    "remove_domains": {
+      "name": "ドメインを削除",
+      "description": "ACL から各ドメインとワイルドカードを削除し、Home Assistant のスイッチも削除します。オフのまま残すにはスイッチをオフにしてください。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "connector": {
+          "name": "アプリコネクター名",
+          "description": "ポリシー内のアプリコネクター名。ノード名やタグではありません。"
+        },
+        "domains": {
+          "name": "ドメイン一覧",
+          "description": "ドメイン名の一覧。各ドメインとワイルドカードを一緒に管理します。"
+        }
+      }
+    },
+    "set_domain_group": {
+      "name": "ドメイングループを保存",
+      "description": "Home Assistant 内のドメイングループを作成または更新します。Tailscale ポリシーは変更しません。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "group_id": {
+          "name": "グループ",
+          "description": "ローカルグループの固定 ID。同じ ID で呼び出すとグループを更新します。"
+        },
+        "name": {
+          "name": "グループ名",
+          "description": "グループスイッチの表示名。"
+        },
+        "members": {
+          "name": "ドメイン一覧",
+          "description": "connector と domain のペアの一覧。既存またはオフで保存されたドメインを選択します。"
+        }
+      }
+    },
+    "delete_domain_group": {
+      "name": "ドメイングループを削除",
+      "description": "ローカルグループとそのスイッチを削除します。個別のドメインスイッチと Tailscale ポリシーは保持されます。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "group_id": {
+          "name": "グループ",
+          "description": "ローカルグループの固定 ID。同じ ID で呼び出すとグループを更新します。"
+        }
+      }
+    },
+    "move_group_members": {
+      "name": "ドメイングループのメンバーを移動",
+      "description": "選択した connector と domain のメンバーを、あるローカルグループから別のローカルグループへ移動します。Tailscale ポリシーは変更しません。管理者権限が必要です。",
+      "fields": {
+        "entry_id": {
+          "name": "統合",
+          "description": "設定済みの Tailscale Updator 統合を選択してください。"
+        },
+        "source_group_id": {
+          "name": "移動元グループ",
+          "description": "メンバーを移動するローカルグループの固定 ID。"
+        },
+        "target_group_id": {
+          "name": "移動先グループ",
+          "description": "メンバーを移動する先のローカルグループの固定 ID。"
+        },
+        "members": {
+          "name": "ドメイン一覧",
+          "description": "移動元グループに既に存在する connector と domain のペアの一覧。"
+        }
+      }
+    }
+  }
+}

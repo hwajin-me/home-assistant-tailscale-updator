@@ -1,0 +1,285 @@
+"""OAuth client credentials and conditional Tailscale policy writes."""
+
+import asyncio
+import json
+import math
+import time
+from dataclasses import dataclass
+from urllib.parse import quote
+
+from aiohttp import ClientError, ClientSession, ClientTimeout
+
+from .const import API_BASE
+from .policy import Policy, PolicyError, domain_base, domain_bases
+
+
+class ApiError(Exception):
+    """Tailscale request failed (never includes credentials or policy bodies)."""
+
+
+class PolicyResponseError(ApiError):
+    """The remote endpoint returned an unreadable policy."""
+
+
+class AuthError(ApiError):
+    """Client credentials rejected."""
+
+
+class ApiHttpError(ApiError):
+    """An API endpoint returned an unsuccessful HTTP status."""
+
+    def __init__(self, status: int):
+        self.status = status
+        super().__init__(f"Tailscale API returned HTTP {status}")
+
+
+class ConflictError(ApiError):
+    """The policy changed since it was read."""
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    text: str
+    etag: str
+
+    @property
+    def policy(self):
+        return Policy(self.text)
+
+
+class TailscaleClient:
+    def __init__(
+        self, session: ClientSession, tailnet: str, client_id: str, client_secret: str
+    ):
+        self.session = session
+        self.tailnet = tailnet
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._token = None
+        self._expires = 0.0
+        self._token_lock = asyncio.Lock()
+        self.write_lock = asyncio.Lock()
+        self._url = f"{API_BASE}/tailnet/{quote(tailnet, safe='')}/acl"
+
+    async def _access_token(self):
+        async with self._token_lock:
+            if self._token and time.monotonic() < self._expires:
+                return self._token
+            try:
+                async with self.session.post(
+                    f"{API_BASE}/oauth/token",
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": self._client_id,
+                        "client_secret": self._client_secret,
+                    },
+                    timeout=ClientTimeout(total=30),
+                ) as response:
+                    if response.status in (400, 401, 403):
+                        raise AuthError("OAuth client credentials were rejected")
+                    if response.status != 200:
+                        raise ApiError(
+                            f"OAuth endpoint returned HTTP {response.status}"
+                        )
+                    data = await response.json()
+                    token = data["access_token"]
+                    lifetime = float(data["expires_in"])
+                    if (
+                        not isinstance(token, str)
+                        or not token
+                        or not math.isfinite(lifetime)
+                        or lifetime <= 0
+                    ):
+                        raise ValueError
+                    self._token = token
+                    self._expires = time.monotonic() + max(0, lifetime - 60)
+                    return token
+            except (
+                ClientError,
+                TimeoutError,
+                ValueError,
+                KeyError,
+                TypeError,
+                OverflowError,
+            ) as err:
+                raise ApiError("Could not obtain OAuth token") from err
+
+    async def _request(self, method: str, *, body=None, etag=None, url=None):
+        for attempt in range(2):
+            token = await self._access_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json" if url else "application/hujson",
+            }
+            if body is not None:
+                headers["Content-Type"] = "application/hujson"
+                headers["If-Match"] = etag
+            try:
+                async with self.session.request(
+                    method,
+                    url or self._url,
+                    headers=headers,
+                    data=body,
+                    timeout=ClientTimeout(total=30),
+                ) as response:
+                    if response.status == 401:
+                        if self._token == token:
+                            self._token = None
+                        if attempt == 0:
+                            continue
+                        raise AuthError("API authentication failed")
+                    if response.status == 412:
+                        raise ConflictError("Policy changed; reload it before retrying")
+                    if not 200 <= response.status < 300:
+                        raise ApiHttpError(response.status)
+                    return await response.text(), response.headers.get("ETag", "")
+            except (ClientError, TimeoutError) as err:
+                raise ApiError("Cannot communicate with Tailscale API") from err
+
+    async def get_policy(self) -> Snapshot:
+        text, etag = await self._request("GET")
+        try:
+            Policy(text)
+        except PolicyError as err:
+            raise PolicyResponseError(
+                "Tailscale returned an invalid JSONC policy"
+            ) from err
+        return Snapshot(text, etag)
+
+    async def get_tailnet_name(self) -> str:
+        """Discover the current tailnet without asking for a tailnet identifier.
+
+        Shared devices belong to other tailnets and must never supply the title.
+        Metadata scopes are optional: failure does not prevent policy management.
+        """
+        root = f"{API_BASE}/tailnet/{quote(self.tailnet, safe='')}"
+        for resource in ("devices", "users"):
+            try:
+                text, _ = await self._request("GET", url=f"{root}/{resource}")
+                data = json.loads(text)
+                values = data.get(resource, [])
+                if not isinstance(values, list):
+                    continue
+                names = set()
+                for value in values:
+                    if not isinstance(value, dict):
+                        continue
+                    if resource == "devices":
+                        name = value.get("name")
+                        if value.get("isExternal") or not isinstance(name, str):
+                            continue
+                        suffix = name.rstrip(".").lower().partition(".")[2]
+                        if suffix.endswith(".ts.net") and len(suffix.split(".")) == 3:
+                            names.add(suffix)
+                    elif value.get("type") == "member":
+                        name = value.get("tailnetId")
+                        if isinstance(name, str) and name.strip():
+                            names.add(name.strip())
+                if len(names) == 1:
+                    return names.pop()
+            except AuthError:
+                raise
+            except (ApiError, ValueError, AttributeError):
+                continue
+        return "Tailscale OAuth"
+
+    async def normalize_initial_domains(self) -> Snapshot:
+        """Normalize registration-time domains, rebasing concurrent policy edits."""
+        async with self.write_lock:
+            for attempt in range(3):
+                snapshot = await self.get_policy()
+                updated = snapshot.policy.normalize_connector_domains()
+                if updated == snapshot.text:
+                    return snapshot
+                try:
+                    await self._write(updated, snapshot.etag, snapshot.text)
+                except ConflictError:
+                    if attempt < 2:
+                        continue
+                    raise
+                return await self.get_policy()
+        raise ConflictError("Policy remained busy")
+
+    async def _write(self, text: str, etag: str, original: str):
+        if not etag or etag.strip() == "*":
+            raise ApiError("A specific policy ETag is required for safe updates")
+        text = Policy(original).merge_connector_changes(text)
+        await self._request("POST", body=text.encode("utf-8"), etag=etag)
+
+    async def set_domains(
+        self, connector: str, domains: list[str], enabled: bool
+    ) -> Snapshot:
+        return await self.change_domain_pairs(
+            connector, domains if enabled else [], domains if not enabled else []
+        )
+
+    async def change_domain_pairs(
+        self,
+        connector: str,
+        add: list[str],
+        remove: list[str],
+        *,
+        require_existing: bool = False,
+    ) -> Snapshot:
+        """Read, edit and conditionally write complete domain pairs."""
+        async with self.write_lock:
+            for attempt in range(3):
+                snapshot = await self.get_policy()
+                if require_existing:
+                    existing = domain_bases(snapshot.policy.domains(connector))
+                    if not {domain_base(d) for d in remove} <= existing:
+                        raise PolicyError("Selected domain no longer exists")
+                updated = snapshot.policy.change_domain_pairs(connector, add, remove)
+                if updated == snapshot.text:
+                    return snapshot
+                try:
+                    await self._write(updated, snapshot.etag, snapshot.text)
+                except ConflictError:
+                    if attempt < 2:
+                        continue
+                    raise
+                return await self.get_policy()
+        raise ConflictError("Policy remained busy")
+
+    async def set_domain_group(self, members: list[dict], enabled: bool) -> Snapshot:
+        """Apply every member in a single conditional policy write, or none."""
+        by_connector: dict[str, set[str]] = {}
+        for member in members:
+            by_connector.setdefault(member["connector"], set()).add(
+                domain_base(member["domain"])
+            )
+        if not by_connector:
+            raise PolicyError("The domain group is empty")
+        async with self.write_lock:
+            for attempt in range(3):
+                snapshot = await self.get_policy()
+                updated = snapshot.text
+                for connector, domains in sorted(by_connector.items()):
+                    updated = Policy(updated).set_domains(
+                        connector, sorted(domains), enabled
+                    )
+                if updated == snapshot.text:
+                    return snapshot
+                try:
+                    await self._write(updated, snapshot.etag, snapshot.text)
+                except ConflictError:
+                    if attempt < 2:
+                        continue
+                    raise
+                return await self.get_policy()
+        raise ConflictError("Policy remained busy")
+
+    async def replace_policy(self, text: str, expected_etag: str) -> Snapshot:
+        """Compatibility endpoint: replace app arrays only, never the full policy."""
+        Policy(text)
+        if not expected_etag or expected_etag.strip() == "*":
+            raise ApiError("A specific policy ETag is required for safe updates")
+        async with self.write_lock:
+            snapshot = await self.get_policy()
+            if snapshot.etag != expected_etag:
+                raise ConflictError("Policy changed; reload it before retrying")
+            updated = snapshot.policy.merge_connector_changes(text)
+            if updated == snapshot.text:
+                return snapshot
+            await self._write(updated, expected_etag, snapshot.text)
+            return await self.get_policy()
