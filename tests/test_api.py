@@ -13,12 +13,25 @@ from custom_components.tailscale_updator.api import (
     ApiHttpError,
     AuthError,
     ConflictError,
+    Snapshot,
     TailscaleClient,
 )
 from custom_components.tailscale_updator.const import API_BASE
+from custom_components.tailscale_updator.policy import Policy
 
 TOKEN = f"{API_BASE}/oauth/token"
 ACL = f"{API_BASE}/tailnet/example.com/acl"
+
+
+def test_snapshot_reuses_parsed_policy_and_refreshes_for_new_response():
+    first = Snapshot(policy(["a.com", "*.a.com"]), '"same-etag"')
+    second = Snapshot(policy([]), '"same-etag"')
+    with patch("custom_components.tailscale_updator.api.Policy", wraps=Policy) as parse:
+        for _ in range(100):
+            assert first.policy.domains("app") == ["a.com", "*.a.com"]
+        assert parse.call_count == 1
+        assert second.policy.domains("app") == []
+        assert parse.call_count == 2
 
 
 def policy(domains):

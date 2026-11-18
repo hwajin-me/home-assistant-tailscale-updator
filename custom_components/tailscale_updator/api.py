@@ -5,6 +5,7 @@ import json
 import math
 import time
 from dataclasses import dataclass
+from functools import cached_property
 from urllib.parse import quote
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
@@ -42,7 +43,7 @@ class Snapshot:
     text: str
     etag: str
 
-    @property
+    @cached_property
     def policy(self):
         return Policy(self.text)
 

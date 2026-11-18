@@ -27,7 +27,7 @@ from custom_components.tailscale_updator.api import (
 from custom_components.tailscale_updator.config_flow import ConfigFlow, OptionsFlow
 from custom_components.tailscale_updator.const import DOMAIN
 from custom_components.tailscale_updator.coordinator import PolicyCoordinator
-from custom_components.tailscale_updator.policy import PolicyError
+from custom_components.tailscale_updator.policy import PolicyError, normalize_domain
 from custom_components.tailscale_updator.services import async_setup_services
 from custom_components.tailscale_updator.switch import DomainSwitch
 
@@ -90,6 +90,38 @@ async def test_missing_connector_unavailable(hass, entry):
     switch = DomainSwitch(entry, "app", "a.com")
     coordinator.async_set_updated_data(Snapshot("{}", '"2"'))
     assert not switch.available
+
+
+async def test_switches_share_domain_membership_and_refresh_after_policy_changes(
+    hass, entry
+):
+    coordinator = make_coordinator(hass, entry)
+    switches = [DomainSwitch(entry, "app", "a.com") for _ in range(20)]
+    with patch(
+        "custom_components.tailscale_updator.switch.normalize_domain",
+        wraps=normalize_domain,
+    ) as normalize:
+        for switch in switches:
+            assert switch.available
+            assert switch.is_on
+            assert switch.extra_state_attributes == {
+                "parent_present": True,
+                "wildcard_present": True,
+            }
+        assert normalize.call_count == 2
+
+        coordinator.async_set_updated_data(Snapshot(policy(["a.com"]), '"1"'))
+        for switch in switches:
+            assert switch.available
+            assert switch.is_on is False
+            assert switch.extra_state_attributes == {
+                "parent_present": True,
+                "wildcard_present": False,
+            }
+        assert normalize.call_count == 3
+
+        coordinator.async_set_updated_data(Snapshot("{}", '"2"'))
+        assert all(not switch.available for switch in switches)
 
 
 async def test_coordinator_auth_and_transport_errors(hass, entry):

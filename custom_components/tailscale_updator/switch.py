@@ -101,11 +101,18 @@ class DomainSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_name = f"{connector}: {self.domain}"
         self._attr_device_info = domain_device_info(entry)
 
-    def _domains(self) -> set[str]:
-        return {
-            normalize_domain(d)
-            for d in self.coordinator.data.policy.domains(self.connector)
-        }
+    def _domains(self) -> frozenset[str]:
+        policy = self.coordinator.data.policy
+        cache = getattr(self.coordinator, "_domain_membership_cache", None)
+        if cache is None or cache[0] is not policy:
+            cache = (policy, {})
+            self.coordinator._domain_membership_cache = cache
+        domains_by_connector = cache[1]
+        if self.connector not in domains_by_connector:
+            domains_by_connector[self.connector] = frozenset(
+                normalize_domain(d) for d in policy.domains(self.connector)
+            )
+        return domains_by_connector[self.connector]
 
     @property
     def available(self):
